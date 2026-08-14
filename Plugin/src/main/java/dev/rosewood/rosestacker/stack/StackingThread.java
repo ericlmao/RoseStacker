@@ -85,6 +85,7 @@ public class StackingThread implements StackingLogic, AutoCloseable {
     private final Map<UUID, StackedItem> stackedItems;
     private final Map<Chunk, StackChunkData> stackChunkData;
     private final Set<UUID> pendingEntityUnstackChecks;
+    private final Map<UUID, PlayerNametagSnapshot> nametagPlayerSnapshots;
 
     private final boolean dynamicEntityTags, dynamicItemTags;
     private final double entityDynamicViewRangeSqrd, itemDynamicViewRangeSqrd;
@@ -127,6 +128,7 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         this.stackedItems = new ConcurrentHashMap<>();
         this.stackChunkData = new ConcurrentHashMap<>();
         this.pendingEntityUnstackChecks = ConcurrentHashMap.newKeySet();
+        this.nametagPlayerSnapshots = new ConcurrentHashMap<>();
 
         this.dynamicEntityTags = SettingKey.ENTITY_DISPLAY_TAGS.get() && SettingKey.ENTITY_DYNAMIC_TAG_VIEW_RANGE_ENABLED.get();
         this.dynamicItemTags = SettingKey.ITEM_DISPLAY_TAGS.get() && SettingKey.ITEM_DYNAMIC_TAG_VIEW_RANGE_ENABLED.get();
@@ -317,39 +319,47 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             return;
 
         List<Player> players = new ArrayList<>(Bukkit.getOnlinePlayers());
-        if (players.isEmpty())
+
+        // Refresh the per-player snapshots used below for distance culling. On the primary thread
+        // these run inline; on Folia the stack loop may use a snapshot from the previous cycle,
+        // which only delays tag visibility changes by a single update period.
+        Set<UUID> onlinePlayerIds = new HashSet<>();
+        for (Player player : players)
+            onlinePlayerIds.add(player.getUniqueId());
+        this.nametagPlayerSnapshots.keySet().retainAll(onlinePlayerIds);
+
+        for (Player player : players) {
+            ThreadUtils.runOnEntity(player, () -> {
+                if (player.isValid() && player.getWorld().equals(this.targetWorld)) {
+                    this.nametagPlayerSnapshots.put(player.getUniqueId(), new PlayerNametagSnapshot(player,
+                            player.getLocation(), ItemUtils.isStackingTool(player.getInventory().getItemInMainHand())));
+                } else {
+                    this.nametagPlayerSnapshots.remove(player.getUniqueId());
+                }
+            });
+        }
+
+        List<PlayerNametagSnapshot> snapshots = new ArrayList<>(this.nametagPlayerSnapshots.values());
+        if (snapshots.isEmpty())
             return;
 
         this.updatingNametags = true;
         try {
-            List<StackedEntity> entities = this.dynamicEntityTags ? new ArrayList<>(this.stackedEntities.values()) : List.of();
-            List<StackedItem> items = this.dynamicItemTags ? new ArrayList<>(this.stackedItems.values()) : List.of();
+            // Loop stacks in the outer loop so per-stack work (entity location, display name) is
+            // done once per stack instead of once per (player, stack) pair
+            if (this.dynamicEntityTags)
+                for (StackedEntity stackedEntity : new ArrayList<>(this.stackedEntities.values()))
+                    this.processEntityNametags(snapshots, stackedEntity);
 
-            for (Player player : players)
-                ThreadUtils.runOnEntity(player, () -> this.processNametagsForPlayer(player, entities, items));
+            if (this.dynamicItemTags)
+                for (StackedItem stackedItem : new ArrayList<>(this.stackedItems.values()))
+                    this.processItemNametags(snapshots, stackedItem);
         } finally {
             this.updatingNametags = false;
         }
     }
 
-    private void processNametagsForPlayer(Player player, List<StackedEntity> entities, List<StackedItem> items) {
-        if (!player.isValid() || !player.getWorld().equals(this.targetWorld))
-            return;
-
-        Location playerLocation = player.getLocation();
-        ItemStack itemStack = player.getInventory().getItemInMainHand();
-        boolean displayStackingToolParticles = ItemUtils.isStackingTool(itemStack);
-
-        if (this.dynamicEntityTags)
-            for (StackedEntity stackedEntity : entities)
-                this.processEntityNametagForPlayer(player, playerLocation, displayStackingToolParticles, stackedEntity);
-
-        if (this.dynamicItemTags)
-            for (StackedItem stackedItem : items)
-                this.processItemNametagForPlayer(player, playerLocation, stackedItem);
-    }
-
-    private void processEntityNametagForPlayer(Player player, Location playerLocation, boolean displayStackingToolParticles, StackedEntity stackedEntity) {
+    private void processEntityNametags(List<PlayerNametagSnapshot> snapshots, StackedEntity stackedEntity) {
         LivingEntity entity = stackedEntity.getEntity();
         if (entity == null)
             return;
@@ -359,43 +369,60 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                 return;
 
             Location entityLocation = entity.getLocation();
-            if (!playerLocation.getWorld().equals(entityLocation.getWorld()))
-                return;
-
-            double distanceSqrd = playerLocation.distanceSquared(entityLocation);
-            if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
-                return;
-
-            boolean visible = distanceSqrd < this.entityDynamicViewRangeSqrd;
-            if (visible && this.entityDynamicWallDetection) {
-                Location targetLocation = entityLocation.clone().add(0, entity.getEyeHeight(), 0);
-                visible = this.hasLineOfSight(playerLocation, targetLocation, 0.75, true);
-            }
-
-            String displayName = stackedEntity.getDisplayName();
-            boolean displayNameVisible = stackedEntity.isDisplayNameVisible() && visible;
-            boolean spawnParticles = visible && displayStackingToolParticles;
-            Location particleLocation = null;
-            DustOptions dustOptions = null;
-            if (spawnParticles) {
-                particleLocation = entityLocation.clone().add(0, entity.getEyeHeight(true) + 0.75, 0);
-                dustOptions = PersistentDataUtils.isUnstackable(entity) ? StackerUtils.UNSTACKABLE_DUST_OPTIONS : StackerUtils.STACKABLE_DUST_OPTIONS;
-            }
-
-            Location finalParticleLocation = particleLocation;
-            DustOptions finalDustOptions = dustOptions;
-            ThreadUtils.runOnEntity(player, () -> {
+            World entityWorld = entityLocation.getWorld();
+            String displayName = null;
+            boolean displayNameComputed = false;
+            for (PlayerNametagSnapshot snapshot : snapshots) {
+                Player player = snapshot.player();
                 if (!player.isValid())
-                    return;
+                    continue;
 
-                NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, entity, displayName, displayNameVisible);
-                if (spawnParticles)
-                    player.spawnParticle(VersionUtils.DUST, finalParticleLocation, 1, 0.0, 0.0, 0.0, 0.0, finalDustOptions);
-            });
+                Location playerLocation = snapshot.location();
+                if (!entityWorld.equals(playerLocation.getWorld()))
+                    continue;
+
+                double distanceSqrd = playerLocation.distanceSquared(entityLocation);
+                if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
+                    continue;
+
+                boolean visible = distanceSqrd < this.entityDynamicViewRangeSqrd;
+                if (visible && this.entityDynamicWallDetection) {
+                    Location targetLocation = entityLocation.clone().add(0, entity.getEyeHeight(), 0);
+                    visible = this.hasLineOfSight(playerLocation, targetLocation, 0.75, true);
+                }
+
+                if (!displayNameComputed) {
+                    // Also computes the isDisplayNameVisible state, so this must be called first
+                    displayName = stackedEntity.getDisplayName();
+                    displayNameComputed = true;
+                }
+
+                boolean displayNameVisible = stackedEntity.isDisplayNameVisible() && visible;
+                boolean spawnParticles = visible && snapshot.holdingStackingTool();
+                Location particleLocation = null;
+                DustOptions dustOptions = null;
+                if (spawnParticles) {
+                    particleLocation = entityLocation.clone().add(0, entity.getEyeHeight(true) + 0.75, 0);
+                    dustOptions = PersistentDataUtils.isUnstackable(entity) ? StackerUtils.UNSTACKABLE_DUST_OPTIONS : StackerUtils.STACKABLE_DUST_OPTIONS;
+                }
+
+                String finalDisplayName = displayName;
+                boolean finalSpawnParticles = spawnParticles;
+                Location finalParticleLocation = particleLocation;
+                DustOptions finalDustOptions = dustOptions;
+                ThreadUtils.runOnEntity(player, () -> {
+                    if (!player.isValid())
+                        return;
+
+                    NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, entity, finalDisplayName, displayNameVisible);
+                    if (finalSpawnParticles)
+                        player.spawnParticle(VersionUtils.DUST, finalParticleLocation, 1, 0.0, 0.0, 0.0, 0.0, finalDustOptions);
+                });
+            }
         });
     }
 
-    private void processItemNametagForPlayer(Player player, Location playerLocation, StackedItem stackedItem) {
+    private void processItemNametags(List<PlayerNametagSnapshot> snapshots, StackedItem stackedItem) {
         Item item = stackedItem.getItem();
         if (item == null)
             return;
@@ -405,24 +432,34 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                 return;
 
             Location itemLocation = item.getLocation();
-            if (!playerLocation.getWorld().equals(itemLocation.getWorld()))
-                return;
+            World itemWorld = itemLocation.getWorld();
+            for (PlayerNametagSnapshot snapshot : snapshots) {
+                Player player = snapshot.player();
+                if (!player.isValid())
+                    continue;
 
-            double distanceSqrd = playerLocation.distanceSquared(itemLocation);
-            if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
-                return;
+                Location playerLocation = snapshot.location();
+                if (!itemWorld.equals(playerLocation.getWorld()))
+                    continue;
 
-            boolean visible = distanceSqrd < this.itemDynamicViewRangeSqrd;
-            if (visible && this.itemDynamicWallDetection)
-                visible = this.hasLineOfSight(playerLocation, itemLocation, 0.75, true);
+                double distanceSqrd = playerLocation.distanceSquared(itemLocation);
+                if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
+                    continue;
 
-            boolean finalVisible = visible;
-            ThreadUtils.runOnEntity(player, () -> {
-                if (player.isValid())
-                    NMSAdapter.getHandler().updateEntityNameTagVisibilityForPlayer(player, item, finalVisible);
-            });
+                boolean visible = distanceSqrd < this.itemDynamicViewRangeSqrd;
+                if (visible && this.itemDynamicWallDetection)
+                    visible = this.hasLineOfSight(playerLocation, itemLocation, 0.75, true);
+
+                boolean finalVisible = visible;
+                ThreadUtils.runOnEntity(player, () -> {
+                    if (player.isValid())
+                        NMSAdapter.getHandler().updateEntityNameTagVisibilityForPlayer(player, item, finalVisible);
+                });
+            }
         });
     }
+
+    private record PlayerNametagSnapshot(Player player, Location location, boolean holdingStackingTool) {}
 
     private boolean hasLineOfSight(Location location1, Location location2, double accuracy, boolean requireOccluding) {
         Vector vector1 = location1.toVector();

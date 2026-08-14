@@ -65,15 +65,25 @@ public class HologramManager extends Manager implements Listener {
     private void updateWatchers() {
         Collection<? extends Player> players = new ArrayList<>(Bukkit.getOnlinePlayers());
         List<Hologram> holograms = new ArrayList<>(this.holograms.values());
+        if (players.isEmpty() || holograms.isEmpty())
+            return;
+
         for (Player player : players)
             ThreadUtils.runOnEntity(player, () -> {
+                // Hoisted out of updateWatcher; player.getLocation() allocates and this loop
+                // runs players * holograms times per cycle
+                Location playerLocation = player.getLocation();
                 for (Hologram hologram : holograms)
-                    this.updateWatcher(player, hologram);
+                    this.updateWatcher(player, playerLocation, hologram);
             });
     }
 
     private void updateWatcher(Player player, Hologram hologram) {
-        if (this.isPlayerInRange(player, hologram.getLocation())) {
+        this.updateWatcher(player, player.getLocation(), hologram);
+    }
+
+    private void updateWatcher(Player player, Location playerLocation, Hologram hologram) {
+        if (this.isPlayerInRange(playerLocation, hologram.getLocation())) {
             hologram.addWatcher(player);
             if (this.hideThroughWalls)
                 hologram.setVisibility(player, this.hasLineOfSight(player.getEyeLocation(), hologram.getDisplayLocation(), 0.75, true));
@@ -82,8 +92,8 @@ public class HologramManager extends Manager implements Listener {
         }
     }
 
-    private boolean isPlayerInRange(Player player, Location location) {
-        return player.getWorld().equals(location.getWorld()) && player.getLocation().distanceSquared(location) <= this.renderDistanceSqrd;
+    private boolean isPlayerInRange(Location playerLocation, Location location) {
+        return playerLocation.getWorld().equals(location.getWorld()) && playerLocation.distanceSquared(location) <= this.renderDistanceSqrd;
     }
 
     private boolean hasLineOfSight(Location location1, Location location2, double accuracy, boolean requireOccluding) {
@@ -146,9 +156,23 @@ public class HologramManager extends Manager implements Listener {
                 this.updateWatcherSafely(player, hologram);
         } else {
             boolean recreate = hologram.setTextSilently(text);
+            boolean changed = hologram.consumeDirty();
+            if (!recreate && !changed)
+                return; // Nothing to send; don't schedule per-watcher tasks
+
             for (Player player : new ArrayList<>(hologram.getWatchers()))
                 this.updateTextSafely(player, hologram, recreate);
         }
+    }
+
+    /**
+     * Gets the hologram at the given location if one exists
+     *
+     * @param location The location of the hologram
+     * @return the hologram, or null if none exists
+     */
+    public Hologram getHologram(Location location) {
+        return this.holograms.get(location);
     }
 
     /**

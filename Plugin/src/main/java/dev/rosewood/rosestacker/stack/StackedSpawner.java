@@ -9,6 +9,7 @@ import dev.rosewood.rosestacker.manager.HologramManager;
 import dev.rosewood.rosestacker.manager.LocaleManager;
 import dev.rosewood.rosestacker.manager.StackSettingManager;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
+import dev.rosewood.rosestacker.nms.hologram.Hologram;
 import dev.rosewood.rosestacker.nms.spawner.SpawnerType;
 import dev.rosewood.rosestacker.nms.spawner.StackedSpawnerTile;
 import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
@@ -149,6 +150,13 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
             hologramManager.deleteHologram(location);
             return;
         }
+
+        // If the hologram already exists but nobody is close enough to see it, skip building the
+        // display text. The text may go briefly stale for a newly approaching player, but the
+        // periodic hologram update task corrects it within one cycle once they become a watcher.
+        Hologram hologram = hologramManager.getHologram(location);
+        if (hologram != null && hologram.getWatchers().isEmpty())
+            return;
 
         List<String> displayStrings;
         if (this.size == 1 && !SettingKey.SPAWNER_DISPLAY_TAGS_SINGLE_AMOUNT.get()) {
