@@ -23,6 +23,7 @@ import dev.rosewood.rosestacker.utils.ItemUtils;
 import dev.rosewood.rosestacker.utils.PersistentDataUtils;
 import dev.rosewood.rosestacker.utils.ThreadUtils;
 import dev.rosewood.rosestacker.utils.VersionUtils;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -45,7 +46,6 @@ import org.bukkit.entity.MushroomCow.Variant;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.entity.Sheep;
-import org.bukkit.entity.Slime;
 import org.bukkit.entity.Sniffer;
 import org.bukkit.entity.Wither;
 import org.bukkit.event.EventHandler;
@@ -70,7 +70,6 @@ import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.EntityTeleportEvent;
 import org.bukkit.event.entity.EntityTransformEvent;
 import org.bukkit.event.entity.EntityTransformEvent.TransformReason;
-import org.bukkit.event.entity.PigZapEvent;
 import org.bukkit.event.entity.SheepRegrowWoolEvent;
 import org.bukkit.event.entity.SpawnerSpawnEvent;
 import org.bukkit.event.player.PlayerShearEntityEvent;
@@ -80,6 +79,7 @@ import org.bukkit.util.Vector;
 public class EntityListener implements Listener {
 
     private static final Set<SpawnReason> DELAYED_SPAWN_REASONS;
+    private static Method entityPotionEffectEvent_getEntity;
     static {
         if (NMSUtil.getVersionNumber() > 21 || (NMSUtil.getVersionNumber() == 21 && NMSUtil.getMinorVersionNumber() >= 9)) {
             DELAYED_SPAWN_REASONS = EnumSet.of(
@@ -96,6 +96,11 @@ public class EntityListener implements Listener {
                     SpawnReason.BUILD_SNOWMAN,
                     SpawnReason.BUILD_WITHER
             );
+        }
+        try {
+            entityPotionEffectEvent_getEntity = EntityPotionEffectEvent.class.getMethod("getEntity");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to find `getEntity` method for `EntityPotionEffectEvent` class", e);
         }
     }
 
@@ -224,9 +229,17 @@ public class EntityListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEntityDrinkPotion(EntityPotionEffectEvent event) {
-        // Prevent witches from drinking potions when AI is disabled
-        if (event.getCause() == Cause.POTION_DRINK && PersistentDataUtils.isAiDisabled((LivingEntity) event.getEntity()))
-            event.setCancelled(true);
+        // Prevent mobs (ex: witches, wandering traders, etc) from drinking potions when AI is disabled
+        if (event.getCause() == Cause.POTION_DRINK) {
+            try { // The return type of getEntity was changed from Entity to LivingEntity on Paper in 26.2 and can cause a NoSuchMethodError
+                LivingEntity entity = (LivingEntity) entityPotionEffectEvent_getEntity.invoke(event);
+
+                if (PersistentDataUtils.isAiDisabled(entity))
+                    event.setCancelled(true);
+            } catch (ReflectiveOperationException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -263,7 +276,7 @@ public class EntityListener implements Listener {
     public void onEntityDamageByEntity(EntityDamageByEntityEvent event) {
         // Prevent guardians with disabled AI from spiking their attacker
         if (event.getEntity().getType() == EntityType.PLAYER
-                && (event.getDamager() instanceof Guardian || event.getDamager() instanceof Slime)
+                && (event.getDamager() instanceof Guardian || event.getDamager().getType() == EntityType.SLIME || event.getDamager().getType() == EntityType.MAGMA_CUBE || event.getDamager().getType().name().equals("SULFUR_CUBE"))
                 && PersistentDataUtils.isAiDisabled((LivingEntity) event.getDamager())) {
             event.setCancelled(true);
         }
@@ -421,12 +434,7 @@ public class EntityListener implements Listener {
         this.handleEntityTransformation(event);
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onPigZap(PigZapEvent event) {
-        this.handleEntityTransformation(event);
-    }
-
-    private void handleEntityTransformation(EntityTransformEvent event) {
+    public void handleEntityTransformation(EntityTransformEvent event) {
         if (this.stackManager.isAreaDisabled(event.getEntity().getLocation()))
             return;
 
@@ -436,11 +444,13 @@ public class EntityListener implements Listener {
         EntityStackSettings newStackSettings = this.stackSettingManager.getEntityStackSettings(event.getTransformedEntity().getType());
         boolean aiDisabled = PersistentDataUtils.isAiDisabled((LivingEntity) event.getEntity());
         boolean fromSpawner = PersistentDataUtils.isSpawnedFromSpawner(event.getEntity());
-        if (event.getEntity() instanceof Slime) {
+
+        EntityType entityType = event.getEntity().getType();
+        if (entityType == EntityType.SLIME || entityType == EntityType.MAGMA_CUBE || entityType.name().equals("SULFUR_CUBE")) {
             if (aiDisabled)
-                event.getTransformedEntities().stream().map(x -> (Slime) x).forEach(PersistentDataUtils::removeEntityAi);
+                event.getTransformedEntities().stream().map(x -> (LivingEntity) x).forEach(PersistentDataUtils::removeEntityAi);
             if (fromSpawner)
-                event.getTransformedEntities().stream().map(x -> (Slime) x).forEach(newStackSettings::applySpawnerSpawnedProperties);
+                event.getTransformedEntities().stream().map(x -> (LivingEntity) x).forEach(newStackSettings::applySpawnerSpawnedProperties);
             return;
         }
 
@@ -459,10 +469,9 @@ public class EntityListener implements Listener {
             event.setCancelled(true);
 
             // Handle mooshroom shearing
-            EntityType entityType = event.getEntityType();
             if (entityType == VersionUtils.MOOSHROOM) {
                 int mushroomsDropped = 5;
-                EntityStackSettings mooshroomStackSettings = stackSettingManager.getEntityStackSettings(entityType);
+                EntityStackSettings mooshroomStackSettings = this.stackSettingManager.getEntityStackSettings(entityType);
                 if (mooshroomStackSettings.getSettingValue(EntityStackSettings.MOOSHROOM_DROP_ADDITIONAL_MUSHROOMS_FOR_EACH_COW_IN_STACK).getBoolean())
                     mushroomsDropped += (stackedEntity.getStackSize() - 1) * stackedEntity.getStackSettings().getSettingValue(EntityStackSettings.MOOSHROOM_EXTRA_MUSHROOMS_PER_COW_IN_STACK).getInt();
 

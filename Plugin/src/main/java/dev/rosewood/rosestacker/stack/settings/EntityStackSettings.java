@@ -327,7 +327,8 @@ public class EntityStackSettings extends StackSettings {
         }
 
         NMSHandler nmsHandler = NMSAdapter.getHandler();
-        nmsHandler.transferAngerTarget(unstacked, stacked);
+        if (SettingKey.ENTITY_KILL_TRANSFER_ANGER.get())
+            nmsHandler.transferAngerTarget(unstacked, stacked);
 
         SpawnerFlagPersistenceHook.setPersistence(stacked);
 

@@ -19,6 +19,8 @@ import dev.rosewood.rosestacker.listener.ItemListener;
 import dev.rosewood.rosestacker.listener.SkyblockHookListener;
 import dev.rosewood.rosestacker.listener.StackToolListener;
 import dev.rosewood.rosestacker.listener.WorldListener;
+import dev.rosewood.rosestacker.listener.zap.LegacyZapListener;
+import dev.rosewood.rosestacker.listener.zap.ModernPaperZapListener;
 import dev.rosewood.rosestacker.manager.CommandManager;
 import dev.rosewood.rosestacker.manager.EntityCacheManager;
 import dev.rosewood.rosestacker.manager.HologramManager;
@@ -71,12 +73,19 @@ public class RoseStacker extends RosePlugin {
         PluginManager pluginManager = Bukkit.getPluginManager();
         pluginManager.registerEvents(new BlockListener(this), this);
         pluginManager.registerEvents(new WorldListener(this), this);
-        pluginManager.registerEvents(new EntityListener(this), this);
+        EntityListener entityListener = new EntityListener(this);
+        pluginManager.registerEvents(entityListener, this);
         pluginManager.registerEvents(new InteractListener(this), this);
         pluginManager.registerEvents(new ItemListener(this), this);
         pluginManager.registerEvents(new StackToolListener(this), this);
         pluginManager.registerEvents(new BreedingListener(this), this);
         pluginManager.registerEvents(new BeeListener(this), this);
+
+        if (NMSUtil.isPaper() && (NMSUtil.getVersionNumber() > 26 || (NMSUtil.getVersionNumber() == 26 && NMSUtil.getMinorVersionNumber() >= 2))) {
+            pluginManager.registerEvents(new ModernPaperZapListener(entityListener), this);
+        } else {
+            pluginManager.registerEvents(new LegacyZapListener(entityListener), this);
+        }
 
         if (NMSUtil.getVersionNumber() >= 17) {
             try {

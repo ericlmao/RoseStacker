@@ -76,5 +76,7 @@ public enum EntityStackComparisonResult {
     DIFFERENT_HORNS,
     PLAYING_DEAD,
     HOLDING_ITEMS,
-    DASHING
+    DASHING,
+    HAS_BLOCK,
+//    DIFFERENT_ARCHETYPE
 }
