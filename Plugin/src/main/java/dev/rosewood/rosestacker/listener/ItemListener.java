@@ -149,15 +149,12 @@ public class ItemListener implements Listener {
         }
 
         // This only runs for unvanished players and villagers
-        if (this.applyInventoryItemPickup(inventory, stackedItem, entity))
+        if (this.applyInventoryItemPickup(inventory, stackedItem, entity) != PickupResult.PICKUP_VANILLA)
             event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onInventoryPickup(InventoryPickupItemEvent event) {
-        if (this.stackManager.isAreaDisabled(event.getItem().getLocation()))
-            return;
-
         if (!this.stackManager.isItemStackingEnabled())
             return;
 
@@ -165,8 +162,15 @@ public class ItemListener implements Listener {
         if (stackedItem == null)
             return;
 
+        if (this.stackManager.isAreaDisabled(event.getItem().getLocation()))
+            return;
+
         Inventory inventory = event.getInventory();
-        if (this.applyInventoryItemPickup(inventory, stackedItem, null)) {
+        PickupResult result = this.applyInventoryItemPickup(inventory, stackedItem, null);
+        if (result == PickupResult.PICKUP_VANILLA)
+            return;
+
+        if (result == PickupResult.PICKUP_PARTIAL) {
             InventoryHolder holder;
             if (NMSUtil.isPaper()) {
                 holder = inventory.getHolder(false);
@@ -176,9 +180,9 @@ public class ItemListener implements Listener {
 
             if (holder instanceof Container container)
                 container.update(); // Fix comparators not updating for single-slot changes
-
-            event.setCancelled(true);
         }
+
+        event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.LOW)
@@ -188,15 +192,24 @@ public class ItemListener implements Listener {
             event.setResult(null);
     }
 
+    private enum PickupResult {
+        /** The entire stack fits, let the vanilla pickup happen */
+        PICKUP_VANILLA,
+        /** Part of the stack was moved into the inventory, cancel the vanilla pickup */
+        PICKUP_PARTIAL,
+        /** The inventory has no room, cancel the vanilla pickup without modifying anything */
+        PICKUP_NONE
+    }
+
     /**
      * Applies a stacked item pickup to an inventory
      *
      * @param inventory The inventory to apply to
      * @param stackedItem The stacked item to pick up
      * @param eventEntity The entity picking up the item, or null
-     * @return true if the pickup event should be cancelled, otherwise false
+     * @return the result of the pickup
      */
-    private boolean applyInventoryItemPickup(Inventory inventory, StackedItem stackedItem, Entity eventEntity) {
+    private PickupResult applyInventoryItemPickup(Inventory inventory, StackedItem stackedItem, Entity eventEntity) {
         ItemStack target = stackedItem.getItem().getItemStack();
         int maxStackSize = target.getMaxStackSize();
 
@@ -206,8 +219,13 @@ public class ItemListener implements Listener {
         // Just let them pick it up and remove the item if it will all fit
         if (inventorySpace >= stackedItem.getStackSize() && stackedItem.getStackSize() <= maxStackSize) {
             this.stackManager.removeItemStack(stackedItem);
-            return false;
+            return PickupResult.PICKUP_VANILLA;
         }
+
+        // No room for anything; skip the inventory/stack updates entirely. This is the common
+        // case for full hoppers sitting under item farms and needs to stay cheap.
+        if (inventorySpace <= 0)
+            return PickupResult.PICKUP_NONE;
 
         boolean willPickupAll = inventorySpace >= stackedItem.getStackSize();
         int amount = willPickupAll ? stackedItem.getStackSize() - target.getAmount() : inventorySpace;
@@ -223,10 +241,10 @@ public class ItemListener implements Listener {
             if (eventEntity instanceof Player)
                 eventEntity.getWorld().playSound(eventEntity.getLocation(), Sound.ENTITY_ITEM_PICKUP, 0.2F, (float) (1 + Math.random()));
 
-            return true;
+            return PickupResult.PICKUP_PARTIAL;
         }
 
-        return false;
+        return PickupResult.PICKUP_VANILLA;
     }
 
     /**

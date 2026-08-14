@@ -157,6 +157,20 @@ public abstract class Hologram {
         return false;
     }
 
+    /**
+     * Checks whether any line's text has changed since the last update and clears the dirty state.
+     * Callers that consume this should send subsequent updates with force=true, since the
+     * per-line dirty flags have been reset.
+     *
+     * @return true if any line needs to be re-sent to watchers, false otherwise
+     */
+    public boolean consumeDirty() {
+        boolean dirty = false;
+        for (HologramLine line : this.hologramLines)
+            dirty |= line.checkDirty();
+        return dirty;
+    }
+
     public void update(Player player, boolean force) {
         this.update(List.of(player), force);
     }
