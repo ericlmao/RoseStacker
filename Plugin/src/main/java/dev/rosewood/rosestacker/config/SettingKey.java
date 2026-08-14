@@ -256,6 +256,14 @@ public final class SettingKey implements SettingHolder {
     public static final RoseSetting<Boolean> MISC_SPAWNER_LORE_DISPLAY_GLOBAL_LORE_FIRST = create("misc-settings.spawner-lore-display-global-lore-first", BOOLEAN, true, "Should global lore be displayed before spawner type lore?");
     public static final RoseSetting<Boolean> MISC_SUPERIOR_SKYBLOCK_STACK_GUI_HOOK = create("misc-settings.superior-skyblock-stack-gui-hook", BOOLEAN, true, "Should stacked block/spawner GUIs be blocked from being opened without SuperiorSkyblock2 island break and place permissions?");
 
+    public static final RoseSetting<ConfigurationSection> MISC_CLEARLAG_SETTINGS = create("misc-settings.clear-lag", "Settings for automatically clearing inactive stacks");
+    public static final RoseSetting<Boolean> MISC_CLEARLAG_ENABLED = create("misc-settings.clear-lag.enabled", BOOLEAN, false, "Should inactive entity and item stacks be automatically removed?");
+    public static final RoseSetting<Long> MISC_CLEARLAG_INACTIVE_TIME = create("misc-settings.clear-lag.inactive-time", LONG, 600L, "How long must a stack remain unmodified before it is considered inactive?", "Only stack size changes reset this timer, movement and nametag updates do not", "Values are in seconds");
+    public static final RoseSetting<Long> MISC_CLEARLAG_CHECK_FREQUENCY = create("misc-settings.clear-lag.check-frequency", LONG, 1200L, "How often should we check for inactive stacks to remove?", "Values are in ticks, do not set lower than 20");
+    public static final RoseSetting<Boolean> MISC_CLEARLAG_CLEAR_ENTITIES = create("misc-settings.clear-lag.clear-entities", BOOLEAN, true, "Should inactive entity stacks be removed?", "Only stacks of size greater than 1 will be removed");
+    public static final RoseSetting<Boolean> MISC_CLEARLAG_CLEAR_ITEMS = create("misc-settings.clear-lag.clear-items", BOOLEAN, true, "Should inactive item stacks be removed?");
+    public static final RoseSetting<Boolean> MISC_CLEARLAG_ALERTS = create("misc-settings.clear-lag.alerts", BOOLEAN, true, "Should a Clear Lag Summary be sent to the console and online admins when stacks are removed?", "Admins require the rosestacker.clearlagalerts permission to receive alerts", "Can be toggled in-game with /rs clearlagalerts");
+
     private static <T> RoseSetting<T> create(String key, SettingSerializer<T> serializer, T defaultValue, String... comments) {
         RoseSetting<T> setting = RoseSetting.ofBackedValue(key, RoseStacker.getInstance(), serializer, defaultValue, comments);
         KEYS.add(setting);

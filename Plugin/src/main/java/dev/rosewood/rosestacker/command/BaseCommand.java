@@ -22,6 +22,7 @@ public class BaseCommand extends PrimaryCommand {
                                 new HelpCommand(this.rosePlugin, this),
                                 new ReloadCommand(this.rosePlugin),
                                 new ClearallCommand(this.rosePlugin),
+                                new ClearlagAlertsCommand(this.rosePlugin),
                                 new GiveCommand(this.rosePlugin),
                                 new StackToolCommand(this.rosePlugin),
                                 new StatsCommand(this.rosePlugin),

@@ -684,6 +684,72 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         return toRemove.size();
     }
 
+    /**
+     * Removes all entity stacks of size greater than 1 that have not had their stack size modified
+     * within the given threshold.
+     *
+     * @param inactiveThresholdMillis how long a stack must remain unmodified to be considered inactive, in milliseconds
+     * @return the number of entity stacks removed
+     */
+    public int removeInactiveEntityStacks(long inactiveThresholdMillis) {
+        long cutoff = System.currentTimeMillis() - inactiveThresholdMillis;
+        List<StackedEntity> toRemove = this.stackedEntities.values().stream()
+                .filter(stackedEntity -> {
+                    LivingEntity entity = stackedEntity.getEntity();
+                    return entity != null
+                            && !this.isRemoved(entity)
+                            && stackedEntity.getStackSize() > 1
+                            && stackedEntity.getLastModifiedTime() <= cutoff;
+                })
+                .toList();
+
+        if (toRemove.isEmpty())
+            return 0;
+
+        EntityStackClearEvent entityStackClearEvent = new EntityStackClearEvent(this.targetWorld, toRemove);
+        Bukkit.getPluginManager().callEvent(entityStackClearEvent);
+        if (entityStackClearEvent.isCancelled())
+            return 0;
+
+        toRemove.stream().map(StackedEntity::getEntity).forEach(this::setRemoved);
+        toRemove.stream().map(StackedEntity::getEntity).forEach(LivingEntity::remove);
+        this.stackedEntities.values().removeIf(toRemove::contains);
+
+        return toRemove.size();
+    }
+
+    /**
+     * Removes all item stacks that have not had their stack size modified within the given threshold.
+     *
+     * @param inactiveThresholdMillis how long a stack must remain unmodified to be considered inactive, in milliseconds
+     * @return the number of item stacks removed
+     */
+    public int removeInactiveItemStacks(long inactiveThresholdMillis) {
+        long cutoff = System.currentTimeMillis() - inactiveThresholdMillis;
+        List<StackedItem> toRemove = this.stackedItems.values().stream()
+                .filter(stackedItem -> {
+                    Item item = stackedItem.getItem();
+                    return item != null
+                            && !this.isRemoved(item)
+                            && stackedItem.getLastModifiedTime() <= cutoff;
+                })
+                .toList();
+
+        if (toRemove.isEmpty())
+            return 0;
+
+        ItemStackClearEvent itemStackClearEvent = new ItemStackClearEvent(this.targetWorld, toRemove);
+        Bukkit.getPluginManager().callEvent(itemStackClearEvent);
+        if (itemStackClearEvent.isCancelled())
+            return 0;
+
+        toRemove.stream().map(StackedItem::getItem).forEach(this::setRemoved);
+        toRemove.stream().map(StackedItem::getItem).forEach(Item::remove);
+        this.stackedItems.values().removeIf(toRemove::contains);
+
+        return toRemove.size();
+    }
+
     @Override
     public void updateStackedEntityKey(LivingEntity oldKey, StackedEntity stackedEntity) {
         this.stackedEntities.remove(oldKey.getUniqueId());

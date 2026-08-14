@@ -67,6 +67,7 @@ permissions:
       rosestacker.reload: true
       rosestacker.give: true
       rosestacker.clearall: true
+      rosestacker.clearlagalerts: true
       rosestacker.stats: true
       rosestacker.translate: true
       rosestacker.stacktool: true
@@ -83,6 +84,9 @@ permissions:
     default: op
   rosestacker.clearall:
     description: Allows using the clearall command
+    default: op
+  rosestacker.clearlagalerts:
+    description: Allows toggling and receiving Clear Lag Summary alerts
     default: op
   rosestacker.stats:
     description: Allows using the stats command

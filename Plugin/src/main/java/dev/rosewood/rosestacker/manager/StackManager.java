@@ -3,6 +3,7 @@ package dev.rosewood.rosestacker.manager;
 import dev.rosewood.rosegarden.RosePlugin;
 import dev.rosewood.rosegarden.manager.Manager;
 import dev.rosewood.rosegarden.scheduler.task.ScheduledTask;
+import dev.rosewood.rosegarden.utils.StringPlaceholders;
 import dev.rosewood.rosestacker.config.SettingKey;
 import dev.rosewood.rosestacker.hook.WorldGuardHook;
 import dev.rosewood.rosestacker.nms.spawner.SpawnerType;
@@ -19,6 +20,7 @@ import dev.rosewood.rosestacker.stack.settings.EntityStackSettings;
 import dev.rosewood.rosestacker.stack.settings.MultikillBound;
 import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
 import dev.rosewood.rosestacker.utils.DataUtils;
+import dev.rosewood.rosestacker.utils.StackerUtils;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,6 +39,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
 import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
@@ -51,6 +54,8 @@ public class StackManager extends Manager implements StackingLogic {
     private final Set<String> enabledWorldNames;
 
     private ScheduledTask autosaveTask;
+    private ScheduledTask clearLagTask;
+    private boolean clearLagAlertsEnabled;
 
     private boolean isEntityStackingTemporarilyDisabled;
     private boolean isEntityUnstackingTemporarilyDisabled;
@@ -86,6 +91,13 @@ public class StackManager extends Manager implements StackingLogic {
             this.autosaveTask = this.rosePlugin.getScheduler().runTaskTimer(() -> this.saveAllData(false), interval, interval);
         }
 
+        // Kick off clear lag task if enabled
+        this.clearLagAlertsEnabled = SettingKey.MISC_CLEARLAG_ALERTS.get();
+        if (SettingKey.MISC_CLEARLAG_ENABLED.get() && SettingKey.MISC_CLEARLAG_INACTIVE_TIME.get() > 0) {
+            long clearLagFrequency = Math.max(SettingKey.MISC_CLEARLAG_CHECK_FREQUENCY.get(), 20L);
+            this.clearLagTask = this.rosePlugin.getScheduler().runTaskTimer(this::processClearLag, clearLagFrequency, clearLagFrequency);
+        }
+
         String multikillAmountValue = SettingKey.ENTITY_MULTIKILL_AMOUNT.get();
         int separatorIndex = multikillAmountValue.indexOf("-");
         if (separatorIndex != -1) {
@@ -107,6 +119,11 @@ public class StackManager extends Manager implements StackingLogic {
             this.autosaveTask = null;
         }
 
+        if (this.clearLagTask != null) {
+            this.clearLagTask.cancel();
+            this.clearLagTask = null;
+        }
+
         // Save anything that's loaded
         this.saveAllData(true);
 
@@ -116,6 +133,59 @@ public class StackManager extends Manager implements StackingLogic {
 
         this.disabledWorldNames.clear();
         this.enabledWorldNames.clear();
+    }
+
+    /**
+     * Removes inactive entity and item stacks from all worlds and sends a Clear Lag Summary
+     * to the console and online admins if alerts are enabled.
+     */
+    private void processClearLag() {
+        long inactiveThresholdMillis = SettingKey.MISC_CLEARLAG_INACTIVE_TIME.get() * 1000;
+        if (inactiveThresholdMillis <= 0)
+            return;
+
+        boolean clearEntities = SettingKey.MISC_CLEARLAG_CLEAR_ENTITIES.get();
+        boolean clearItems = SettingKey.MISC_CLEARLAG_CLEAR_ITEMS.get();
+
+        int clearedEntityStacks = 0;
+        int clearedItemStacks = 0;
+        for (StackingThread stackingThread : this.stackingThreads.values()) {
+            if (clearEntities)
+                clearedEntityStacks += stackingThread.removeInactiveEntityStacks(inactiveThresholdMillis);
+            if (clearItems)
+                clearedItemStacks += stackingThread.removeInactiveItemStacks(inactiveThresholdMillis);
+        }
+
+        if (clearedEntityStacks + clearedItemStacks == 0 || !this.clearLagAlertsEnabled)
+            return;
+
+        LocaleManager localeManager = this.rosePlugin.getManager(LocaleManager.class);
+        StringPlaceholders placeholders = StringPlaceholders.of(
+                "entityAmount", StackerUtils.formatNumber(clearedEntityStacks),
+                "itemAmount", StackerUtils.formatNumber(clearedItemStacks));
+
+        localeManager.sendMessage(Bukkit.getConsoleSender(), "clearlag-summary", placeholders);
+        for (Player player : Bukkit.getOnlinePlayers())
+            if (player.hasPermission("rosestacker.clearlagalerts"))
+                localeManager.sendMessage(player, "clearlag-summary", placeholders);
+    }
+
+    /**
+     * @return true if Clear Lag Summary alerts are enabled, false otherwise
+     */
+    public boolean isClearLagAlertsEnabled() {
+        return this.clearLagAlertsEnabled;
+    }
+
+    /**
+     * Toggles whether Clear Lag Summary alerts are sent to the console and online admins.
+     * Resets to the config value when the plugin is reloaded.
+     *
+     * @return the new alert state
+     */
+    public boolean toggleClearLagAlerts() {
+        this.clearLagAlertsEnabled = !this.clearLagAlertsEnabled;
+        return this.clearLagAlertsEnabled;
     }
 
     @Override

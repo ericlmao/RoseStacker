@@ -74,6 +74,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     private boolean displayNameVisible;
     private double x, y, z;
     private int lastModifiedTicks;
+    private long lastModifiedTime;
 
     private EntityStackSettings stackSettings;
 
@@ -85,6 +86,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         this.displayName = null;
         this.displayNameVisible = false;
         this.lastModifiedTicks = this.entity != null ? this.entity.getTicksLived() : 0;
+        this.lastModifiedTime = System.currentTimeMillis();
 
         if (this.entity != null) {
             this.stackSettings = RoseStacker.getInstance().getManager(StackSettingManager.class).getEntityStackSettings(this.entity);
@@ -116,6 +118,13 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
     public int getLastModifiedTicks() {
         return this.lastModifiedTicks;
+    }
+
+    /**
+     * @return the last time in milliseconds that this stack's size was modified
+     */
+    public long getLastModifiedTime() {
+        return this.lastModifiedTime;
     }
 
     public void updateEntity() {
@@ -249,6 +258,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
     private void markModified() {
         this.lastModifiedTicks = this.entity != null ? this.entity.getTicksLived() : 0;
+        this.lastModifiedTime = System.currentTimeMillis();
     }
 
     /**

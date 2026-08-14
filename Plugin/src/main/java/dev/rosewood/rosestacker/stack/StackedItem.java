@@ -30,10 +30,12 @@ public class StackedItem extends Stack<ItemStackSettings> implements Comparable<
 
     private ItemStackSettings stackSettings;
     private double x, y, z;
+    private long lastModifiedTime;
 
     public StackedItem(int size, Item item, boolean updateDisplay) {
         this.size = size;
         this.item = item;
+        this.lastModifiedTime = System.currentTimeMillis();
 
         if (this.item != null) {
             this.stackSettings = RoseStacker.getInstance().getManager(StackSettingManager.class).getItemStackSettings(this.item);
@@ -62,6 +64,7 @@ public class StackedItem extends Stack<ItemStackSettings> implements Comparable<
 
     public void increaseStackSize(int amount, boolean updateDisplay) {
         this.size += amount;
+        this.markModified();
         if (updateDisplay)
             this.updateDisplaySafely();
     }
@@ -71,7 +74,19 @@ public class StackedItem extends Stack<ItemStackSettings> implements Comparable<
             return;
 
         this.size = size;
+        this.markModified();
         this.updateDisplaySafely();
+    }
+
+    private void markModified() {
+        this.lastModifiedTime = System.currentTimeMillis();
+    }
+
+    /**
+     * @return the last time in milliseconds that this stack's size was modified
+     */
+    public long getLastModifiedTime() {
+        return this.lastModifiedTime;
     }
 
     public int getAge() {

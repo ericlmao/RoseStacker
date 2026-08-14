@@ -53,6 +53,14 @@ command-clearall-killed-entities: '&eCleared &b%amount% &eentity stacks.'
 command-clearall-killed-items: '&eCleared &b%amount% &eitem stacks.'
 command-clearall-killed-all: '&eCleared &b%entityAmount% &eentity stacks and &b%itemAmount% &eitem stacks.'
 
+# Clearlagalerts Command
+command-clearlagalerts-description: 'Toggles Clear Lag Summary alerts'
+command-clearlagalerts-enabled: '&eClear lag alerts are now &aenabled&e.'
+command-clearlagalerts-disabled: '&eClear lag alerts are now &cdisabled&e.'
+
+# Clear Lag
+clearlag-summary: '&eClear Lag Summary: Removed &b%entityAmount% &einactive entity stacks and &b%itemAmount% &einactive item stacks.'
+
 # Stats Command
 command-stats-description: 'Displays stats about the plugin'
 command-stats-header: '&aCurrent Plugin Stats:'
