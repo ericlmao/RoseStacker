@@ -25,6 +25,10 @@ import org.bukkit.persistence.PersistentDataContainer;
 
 public class StackedSpawnerTileImpl extends MobSpawnerAbstract implements StackedSpawnerTile {
 
+    private Object cachedMobs;
+    private Object cachedSpawnData;
+    private SpawnerType cachedSpawnerType;
+
     private final TileEntityMobSpawner blockEntity;
     private final BlockPosition blockPos;
     private final StackedSpawner stackedSpawner;
@@ -172,6 +176,23 @@ public class StackedSpawnerTileImpl extends MobSpawnerAbstract implements Stacke
 
     @Override
     public SpawnerType getSpawnerType() {
+        // Rebuilding this parses a NamespacedKey per spawn entry and allocates a SpawnerType, and spawn
+        // conditions call it several times per spawn attempt. Both source fields are replaced wholesale
+        // rather than mutated in place, so an identity check on them is enough to know the cached value
+        // is still current.
+        SpawnerType cached = this.cachedSpawnerType;
+        if (cached != null && this.cachedMobs == this.mobs
+                && this.cachedSpawnData == this.spawnData)
+            return cached;
+
+        SpawnerType spawnerType = this.computeSpawnerType();
+        this.cachedMobs = this.mobs;
+        this.cachedSpawnData = this.spawnData;
+        this.cachedSpawnerType = spawnerType;
+        return spawnerType;
+    }
+
+    private SpawnerType computeSpawnerType() {
         if (this.mobs.isEmpty()) {
             if (this.spawnData == null)
                 return SpawnerType.empty();

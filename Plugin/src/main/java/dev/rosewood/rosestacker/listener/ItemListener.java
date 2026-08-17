@@ -213,8 +213,9 @@ public class ItemListener implements Listener {
         ItemStack target = stackedItem.getItem().getItemStack();
         int maxStackSize = target.getMaxStackSize();
 
-        // Check how much space the inventory has for the new items
-        int inventorySpace = this.getAmountAvailable(inventory, target);
+        // Check how much space the inventory has for the new items. Nothing below distinguishes between
+        // "exactly enough" and "more than enough", so the scan can stop once it reaches the stack size.
+        int inventorySpace = this.getAmountAvailable(inventory, target, stackedItem.getStackSize());
 
         // Just let them pick it up and remove the item if it will all fit
         if (inventorySpace >= stackedItem.getStackSize() && stackedItem.getStackSize() <= maxStackSize) {
@@ -248,13 +249,16 @@ public class ItemListener implements Listener {
     }
 
     /**
-     * Gets the amount of item spaces that are available in an inventory for a given ItemStack
+     * Gets the amount of item spaces that are available in an inventory for a given ItemStack, stopping
+     * once at least a given amount has been found
      *
      * @param inventory The inventory to check
      * @param target The target item type
-     * @return the number of available item spaces available
+     * @param needed The amount past which the exact total no longer matters
+     * @return the number of available item spaces available, which may be an undercount of the true total
+     *         once it has reached {@code needed}
      */
-    private int getAmountAvailable(Inventory inventory, ItemStack target) {
+    private int getAmountAvailable(Inventory inventory, ItemStack target, int needed) {
         int maxStackSize = target.getMaxStackSize();
 
         int inventorySpace = 0;
@@ -266,17 +270,37 @@ public class ItemListener implements Listener {
                 inventorySpace += Math.max(maxStackSize - offhandStack.getAmount(), 0);
         }
 
-        for (ItemStack itemStack : inventory.getStorageContents()) {
-            if (itemStack == null || itemStack.getType() == Material.AIR) {
-                inventorySpace += maxStackSize;
-                continue;
+        if (inventory instanceof PlayerInventory playerInventory) {
+            // A player inventory's addressable slots include armor and offhand, so it still has to go
+            // through getStorageContents() to know which ones are storage
+            for (ItemStack itemStack : playerInventory.getStorageContents()) {
+                if (inventorySpace >= needed)
+                    break;
+                inventorySpace += spaceFor(itemStack, target, maxStackSize);
             }
 
-            if (itemStack.isSimilar(target))
-                inventorySpace += Math.max(maxStackSize - itemStack.getAmount(), 0);
+            return inventorySpace;
         }
 
+        // Reading slots one at a time rather than through getStorageContents() means the CraftItemStack
+        // mirror for a slot is only created if the scan actually reaches it, and no array is allocated
+        // to hold them. Hopper item farms fire InventoryPickupItemEvent constantly and the caller only
+        // needs to know whether the space reaches the stack size, so most of these scans stop early.
+        int size = inventory.getSize();
+        for (int slot = 0; slot < size && inventorySpace < needed; slot++)
+            inventorySpace += spaceFor(inventory.getItem(slot), target, maxStackSize);
+
         return inventorySpace;
+    }
+
+    private static int spaceFor(ItemStack itemStack, ItemStack target, int maxStackSize) {
+        if (itemStack == null || itemStack.getType() == Material.AIR)
+            return maxStackSize;
+
+        if (itemStack.isSimilar(target))
+            return Math.max(maxStackSize - itemStack.getAmount(), 0);
+
+        return 0;
     }
 
     /**
