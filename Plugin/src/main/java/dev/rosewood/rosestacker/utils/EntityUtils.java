@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import org.bukkit.Chunk;
 import org.bukkit.ChunkSnapshot;
 import org.bukkit.Location;
@@ -186,11 +187,45 @@ public final class EntityUtils {
      * @return A List of Blocks the Entity intersects with
      */
     public static Map<Location, Material> getIntersectingBlocks(EntityType entityType, Location location) {
-        BoundingBox bounds = getBoundingBox(entityType, location).expand(-0.1);
         Map<Location, Material> intersectingBlocks = new HashMap<>();
         World world = location.getWorld();
         if (world == null)
             return intersectingBlocks;
+
+        forEachIntersectingBlock(entityType, location, world, (x, y, z, type) -> {
+            intersectingBlocks.put(new Location(world, x, y, z), type);
+            return true;
+        });
+
+        return intersectingBlocks;
+    }
+
+    /**
+     * Tests every block an EntityType would intersect at a Location against a predicate, stopping at the
+     * first block that fails. Unlike {@link #getIntersectingBlocks} this allocates no Locations and no map,
+     * and it reuses a chunk snapshot across the whole bounding box instead of looking one up per block.
+     *
+     * @param entityType The type of Entity
+     * @param location The Location the Entity would be at
+     * @param predicate The test to apply to each intersecting block's Material
+     * @return true if every intersecting block passed the predicate, otherwise false
+     */
+    public static boolean allIntersectingBlocksMatch(EntityType entityType, Location location, Predicate<Material> predicate) {
+        World world = location.getWorld();
+        if (world == null)
+            return true;
+
+        return forEachIntersectingBlock(entityType, location, world, (x, y, z, type) -> predicate.test(type));
+    }
+
+    /**
+     * Walks the blocks an EntityType would intersect at a Location, holding onto one chunk snapshot for as
+     * long as consecutive blocks stay in the same chunk.
+     *
+     * @return true if every block was visited, false if the consumer stopped the walk early
+     */
+    private static boolean forEachIntersectingBlock(EntityType entityType, Location location, World world, IntersectingBlockConsumer consumer) {
+        BoundingBox bounds = getBoundingBox(entityType, location).expand(-0.1);
 
         int minX = floorCoordinate(bounds.getMinX());
         int maxX = floorCoordinate(bounds.getMaxX());
@@ -199,16 +234,34 @@ public final class EntityUtils {
         int minZ = floorCoordinate(bounds.getMinZ());
         int maxZ = floorCoordinate(bounds.getMaxZ());
 
+        int minHeight = world.getMinHeight();
+        int maxHeight = world.getMaxHeight();
+
+        ChunkSnapshot snapshot = null;
+        int snapshotChunkX = 0;
+        int snapshotChunkZ = 0;
         for (int x = minX; x <= maxX; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    Location blockLocation = new Location(world, x, y, z);
-                    intersectingBlocks.put(blockLocation, getLazyBlockMaterial(blockLocation));
+            for (int z = minZ; z <= maxZ; z++) {
+                int chunkX = x >> 4;
+                int chunkZ = z >> 4;
+                if (snapshot == null || chunkX != snapshotChunkX || chunkZ != snapshotChunkZ) {
+                    snapshot = getChunkSnapshot(world, chunkX, chunkZ);
+                    snapshotChunkX = chunkX;
+                    snapshotChunkZ = chunkZ;
+                }
+
+                for (int y = minY; y <= maxY; y++) {
+                    // Out of build bounds and unreadable chunks both read as air, matching getLazyBlockMaterial
+                    Material type = snapshot == null || y < minHeight || y >= maxHeight
+                            ? Material.AIR
+                            : snapshot.getBlockType(x & 15, y, z & 15);
+                    if (!consumer.accept(x, y, z, type))
+                        return false;
                 }
             }
         }
 
-        return intersectingBlocks;
+        return true;
     }
 
     public static Material getLazyBlockMaterial(Location location) {
@@ -218,17 +271,35 @@ public final class EntityUtils {
 
         // TODO: Account for the maximum size of slimes and magma cubes
 
-        try {
-            ChunkLocation pair = new ChunkLocation(location.getWorld().getName(), location.getBlockX() >> 4, location.getBlockZ() >> 4);
-            return chunkSnapshotCache.get(pair, () -> {
-                Chunk chunk = location.getWorld().getChunkAt(location.getBlockX() >> 4, location.getBlockZ() >> 4);
-                return chunk.getChunkSnapshot();
-            }).getBlockType(location.getBlockX() & 15, location.getBlockY(), location.getBlockZ() & 15);
-        } catch (Exception e) {
-            RoseStacker.getInstance().getLogger().warning("Failed to fetch block type at " + location);
-            e.printStackTrace();
+        ChunkSnapshot snapshot = getChunkSnapshot(world, location.getBlockX() >> 4, location.getBlockZ() >> 4);
+        if (snapshot == null)
             return Material.AIR;
+
+        return snapshot.getBlockType(location.getBlockX() & 15, location.getBlockY(), location.getBlockZ() & 15);
+    }
+
+    private static ChunkSnapshot getChunkSnapshot(World world, int chunkX, int chunkZ) {
+        try {
+            ChunkLocation pair = new ChunkLocation(world.getName(), chunkX, chunkZ);
+            return chunkSnapshotCache.get(pair, () -> {
+                Chunk chunk = world.getChunkAt(chunkX, chunkZ);
+                return chunk.getChunkSnapshot();
+            });
+        } catch (Exception e) {
+            RoseStacker.getInstance().getLogger().warning("Failed to fetch chunk snapshot at " + world.getName() + " " + chunkX + "," + chunkZ);
+            e.printStackTrace();
+            return null;
         }
+    }
+
+    @FunctionalInterface
+    private interface IntersectingBlockConsumer {
+
+        /**
+         * @return true to keep walking, false to stop
+         */
+        boolean accept(int x, int y, int z, Material type);
+
     }
 
     /**

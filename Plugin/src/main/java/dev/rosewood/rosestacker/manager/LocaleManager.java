@@ -32,12 +32,31 @@ import org.jetbrains.annotations.NotNull;
 public class LocaleManager extends AbstractLocaleManager {
 
     private List<String> translationLocales;
+    private int generation;
 
     public LocaleManager(RosePlugin rosePlugin) {
         super(rosePlugin);
 
         this.translationLocales = new ArrayList<>();
         this.fetchMinecraftTranslationLocales();
+    }
+
+    @Override
+    public void reload() {
+        super.reload();
+
+        this.generation++;
+    }
+
+    /**
+     * Gets a value that changes every time the locale is reloaded. Callers that cache the output of
+     * {@link #getLocaleMessages} across ticks should include this in their cache key so a reload
+     * invalidates it.
+     *
+     * @return the current locale generation
+     */
+    public int getGeneration() {
+        return this.generation;
     }
 
     @SuppressWarnings("unchecked")
@@ -68,9 +87,11 @@ public class LocaleManager extends AbstractLocaleManager {
      * @return The locale messages with the given placeholders applied
      */
     public List<String> getLocaleMessages(String messageKey, StringPlaceholders stringPlaceholders) {
-        return this.getLocaleStrings(messageKey).stream()
-                .map(message -> HexUtils.colorify(stringPlaceholders.apply(message)))
-                .collect(Collectors.toList());
+        List<String> messages = this.getLocaleStrings(messageKey);
+        List<String> result = new ArrayList<>(messages.size());
+        for (String message : messages)
+            result.add(HexUtils.colorify(stringPlaceholders.apply(message)));
+        return result;
     }
 
     public void fetchMinecraftTranslationLocales() {
