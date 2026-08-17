@@ -487,7 +487,10 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
         this.updatingHolograms = true;
         try {
-            this.stackChunkData.values().stream().flatMap(x -> x.getSpawners().values().stream()).forEach(StackedSpawner::updateDisplaySafely);
+            this.stackChunkData.values().stream()
+                    .flatMap(x -> x.getSpawners().values().stream())
+                    .filter(StackedSpawner::needsDisplayUpdate)
+                    .forEach(StackedSpawner::updateDisplaySafely);
         } finally {
             this.updatingHolograms = false;
         }

@@ -36,6 +36,8 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
     private StackedSpawnerGui stackedSpawnerGui;
     private List<Class<? extends ConditionTag>> lastInvalidConditions;
     private SpawnerStackSettings stackSettings;
+    private String lastDisplayKey;
+    private List<String> lastDisplayStrings;
 
     public StackedSpawner(int size, Block spawner, boolean placedByPlayer, boolean updateDisplay) {
         if (spawner.getType() != Material.SPAWNER)
@@ -158,25 +160,59 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
         if (hologram != null && hologram.getWatchers().isEmpty())
             return;
 
-        List<String> displayStrings;
-        if (this.size == 1 && !SettingKey.SPAWNER_DISPLAY_TAGS_SINGLE_AMOUNT.get()) {
-            displayStrings = localeManager.getLocaleMessages("spawner-hologram-display" + (this.spawnerTile.getSpawnerType().isEmpty() ? "-empty" : "") + "-single", this.getPlaceholders());
-        } else {
-            displayStrings = localeManager.getLocaleMessages("spawner-hologram-display" + (this.spawnerTile.getSpawnerType().isEmpty() ? "-empty" : ""), this.getPlaceholders());
+        // Spawners only count down while a player is within their activation range, so the placeholder
+        // values for the vast majority of loaded spawners are identical from one hologram cycle to the
+        // next. Rebuilding the text means a locale lookup plus a colorify pass per line every cycle, so
+        // reuse the last result whenever nothing that feeds into it has changed.
+        boolean empty = this.spawnerTile.getSpawnerType().isEmpty();
+        boolean single = this.size == 1 && !SettingKey.SPAWNER_DISPLAY_TAGS_SINGLE_AMOUNT.get();
+        int delay = this.spawnerTile.getDelay();
+        long totalSpawned = PersistentDataUtils.getTotalSpawnCount(this.spawnerTile);
+        int maxStackSize = this.stackSettings.getMaxStackSize();
+        String displayKey = localeManager.getGeneration() + "|" + this.size + "|" + delay + "|" + totalSpawned
+                + "|" + maxStackSize + "|" + empty + "|" + single + "|" + this.stackSettings.getDisplayName();
+
+        List<String> displayStrings = this.lastDisplayStrings;
+        if (displayStrings == null || !displayKey.equals(this.lastDisplayKey)) {
+            String messageKey = "spawner-hologram-display" + (empty ? "-empty" : "") + (single ? "-single" : "");
+            displayStrings = localeManager.getLocaleMessages(messageKey, this.getPlaceholders(delay, totalSpawned, maxStackSize));
+            this.lastDisplayStrings = displayStrings;
+            this.lastDisplayKey = displayKey;
         }
 
         hologramManager.createOrUpdateHologram(location, displayStrings);
     }
 
-    private StringPlaceholders getPlaceholders() {
-        int delay = this.spawnerTile.getDelay();
+    private StringPlaceholders getPlaceholders(int delay, long totalSpawned, int maxStackSize) {
         return StringPlaceholders.builder("name", this.stackSettings.getDisplayName())
                 .add("amount", StackerUtils.formatNumber(this.getStackSize()))
-                .add("max_amount", StackerUtils.formatNumber(this.getStackSettings().getMaxStackSize()))
+                .add("max_amount", StackerUtils.formatNumber(maxStackSize))
                 .add("time_remaining", StackerUtils.formatTicksAsTime(delay))
                 .add("ticks_remaining", StackerUtils.formatNumber(delay))
-                .add("total_spawned", StackerUtils.formatNumber(PersistentDataUtils.getTotalSpawnCount(this.spawnerTile)))
+                .add("total_spawned", StackerUtils.formatNumber(totalSpawned))
                 .build();
+    }
+
+    /**
+     * Checks whether {@link #updateDisplay} currently has anything to do. This is cheap enough to call
+     * for every loaded spawner from the periodic hologram task, which lets that task avoid scheduling a
+     * region task per spawner just to have it discover that nobody can see the hologram.
+     *
+     * @return true if the display needs to be created, deleted, or refreshed for a watcher
+     */
+    public boolean needsDisplayUpdate() {
+        if (!SettingKey.SPAWNER_DISPLAY_TAGS.get() || this.stackSettings == null)
+            return false;
+
+        int sizeForHologram = SettingKey.SPAWNER_DISPLAY_TAGS_SINGLE.get() ? 0 : 1;
+        Hologram hologram = RoseStacker.getInstance().getManager(HologramManager.class).getHologram(this.getHologramLocation());
+        if (hologram == null)
+            return this.size > sizeForHologram; // Needs to be created
+
+        if (this.size <= sizeForHologram)
+            return true; // Needs to be deleted
+
+        return !hologram.getWatchers().isEmpty();
     }
 
     public Location getHologramLocation() {

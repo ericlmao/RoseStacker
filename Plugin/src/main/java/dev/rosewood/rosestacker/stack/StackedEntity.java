@@ -21,6 +21,7 @@ import dev.rosewood.rosestacker.nms.NMSAdapter;
 import dev.rosewood.rosestacker.nms.NMSHandler;
 import dev.rosewood.rosestacker.nms.storage.EntityDataEntry;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorage;
+import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorageType;
 import dev.rosewood.rosestacker.stack.settings.EntityStackSettings;
 import dev.rosewood.rosestacker.stack.settings.MultikillBound;
 import dev.rosewood.rosestacker.utils.DataUtils;
@@ -584,6 +585,15 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         // We want to be able to do this check async, we just won't let ender dragons unstack without dying
         if (this.entity instanceof EnderDragon)
             return true;
+
+        // SIMPLE storage doesn't keep any per-entity data; every entry it hands out is this stack's own
+        // entity re-serialized at read time. Materializing one costs an NBT save plus a throwaway entity
+        // construction for every stack on every unstack cycle, and the result is only ever compared
+        // against the entity it was copied from, so compare the stack against itself instead. The
+        // conditions then take their entity1 == entity2 path, which the stacking code already relies on
+        // when looking for a stack to merge into, and reach the same verdict.
+        if (this.stackedEntityDataStorage.getType() == StackedEntityDataStorageType.SIMPLE)
+            return this.stackSettings.testCanStackWith(this, this, true);
 
         NMSHandler nmsHandler = NMSAdapter.getHandler();
         LivingEntity entity = this.stackedEntityDataStorage.peek().createEntity(this.entity.getLocation(), false, this.entity.getType());
