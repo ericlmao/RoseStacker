@@ -191,7 +191,7 @@ public class InteractListener implements Listener {
     @EventHandler
     public void onDispenserDispense(BlockDispenseEvent event) {
         Block block = event.getBlock();
-        if (block.getType() != Material.DISPENSER)
+        if (block.getType() != Material.DISPENSER || !SettingKey.ENTITY_STACK_FROM_DISPENSER_SPAWN_EGGS.get())
             return;
 
         ItemStack itemStack = event.getItem();

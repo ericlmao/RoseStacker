@@ -25,6 +25,7 @@ public final class PersistentDataUtils {
     private static final String NO_AI_METADATA_NAME = "no_ai";
     private static final String SPAWNED_FROM_SPAWNER_METADATA_NAME = "spawner_spawned";
     private static final String SPAWNED_FROM_TRIAL_SPAWNER_METADATA_NAME = "trial_spawner_spawned";
+    private static final String SPAWNED_FROM_DISPENSER_METADATA_NAME = "dispenser_spawned";
     private static final String TOTAL_SPAWNS_METADATA_NAME = "total_spawns";
 
     public static void setUnstackable(Entity entity, boolean unstackable) {
@@ -140,6 +141,22 @@ public final class PersistentDataUtils {
         RosePlugin rosePlugin = RoseStacker.getInstance();
         return entity.getPersistentDataContainer().has(new NamespacedKey(rosePlugin, SPAWNED_FROM_TRIAL_SPAWNER_METADATA_NAME), PersistentDataType.INTEGER)
                 || EntityUtils.hasTrialSpawnerSpawnReason(entity);
+    }
+
+    public static void tagSpawnedFromDispenser(Entity entity) {
+        RosePlugin rosePlugin = RoseStacker.getInstance();
+        entity.getPersistentDataContainer().set(new NamespacedKey(rosePlugin, SPAWNED_FROM_DISPENSER_METADATA_NAME), PersistentDataType.INTEGER, 1);
+    }
+
+    /**
+     * Checks if an entity was spawned from a spawn egg in a dispenser
+     *
+     * @param entity The entity to check
+     * @return true if the entity was spawned from a dispenser, otherwise false
+     */
+    public static boolean isSpawnedFromDispenser(Entity entity) {
+        RosePlugin rosePlugin = RoseStacker.getInstance();
+        return entity.getPersistentDataContainer().has(new NamespacedKey(rosePlugin, SPAWNED_FROM_DISPENSER_METADATA_NAME), PersistentDataType.INTEGER);
     }
 
     public static void increaseSpawnCount(StackedSpawnerTile spawner, long amount) {

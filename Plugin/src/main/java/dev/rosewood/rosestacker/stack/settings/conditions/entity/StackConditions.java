@@ -170,6 +170,10 @@ public final class StackConditions {
                 if (PersistentDataUtils.isSpawnedFromTrialSpawner(entity1) || PersistentDataUtils.isSpawnedFromTrialSpawner(entity2))
                     return EntityStackComparisonResult.FROM_TRIAL_SPAWNER;
 
+            if (!comparingForUnstack && !SettingKey.ENTITY_STACK_FROM_DISPENSER_SPAWN_EGGS.get())
+                if (PersistentDataUtils.isSpawnedFromDispenser(entity1) || PersistentDataUtils.isSpawnedFromDispenser(entity2))
+                    return EntityStackComparisonResult.FROM_DISPENSER;
+
             if (SettingKey.ENTITY_DONT_STACK_IF_ACTIVE_RAIDER.get() && (NMS_HANDLER.isActiveRaider(entity1) || NMS_HANDLER.isActiveRaider(entity2)))
                 return EntityStackComparisonResult.PART_OF_ACTIVE_RAID;
 
