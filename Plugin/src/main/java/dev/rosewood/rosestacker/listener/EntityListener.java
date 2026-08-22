@@ -143,6 +143,12 @@ public class EntityListener implements Listener {
         if (!this.stackManager.isEntityStackingEnabled() || this.stackManager.isEntityStackingTemporarilyDisabled())
             return;
 
+        if (event.getSpawnReason() == CreatureSpawnEvent.SpawnReason.DISPENSE_EGG) {
+            PersistentDataUtils.tagSpawnedFromDispenser(entity);
+            if (!SettingKey.ENTITY_STACK_FROM_DISPENSER_SPAWN_EGGS.get())
+                return;
+        }
+
         Runnable task = () -> {
             // Try to immediately stack everything except bees from hives and built entities due to them duplicating
             this.rosePlugin.getManager(EntityCacheManager.class).preCacheEntity(entity);
