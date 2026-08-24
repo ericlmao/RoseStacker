@@ -12,7 +12,6 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
-import org.bukkit.Chunk;
 import org.bukkit.ChunkSnapshot;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -281,10 +280,20 @@ public final class EntityUtils {
     private static ChunkSnapshot getChunkSnapshot(World world, int chunkX, int chunkZ) {
         try {
             ChunkLocation pair = new ChunkLocation(world.getName(), chunkX, chunkZ);
-            return chunkSnapshotCache.get(pair, () -> {
-                Chunk chunk = world.getChunkAt(chunkX, chunkZ);
-                return chunk.getChunkSnapshot();
-            });
+            ChunkSnapshot snapshot = chunkSnapshotCache.getIfPresent(pair);
+            if (snapshot != null)
+                return snapshot;
+
+            // Never load chunks here; snapshotting an unloaded chunk fires a synchronous chunk load whose
+            // ChunkLoadEvent re-enters this method for the same chunk and recurses until the server dies
+            if (!world.isChunkLoaded(chunkX, chunkZ))
+                return null;
+
+            // Snapshot outside a cache loader so a re-entrant call for the same chunk can't trip
+            // Guava's recursive load detection
+            snapshot = world.getChunkAt(chunkX, chunkZ).getChunkSnapshot();
+            chunkSnapshotCache.put(pair, snapshot);
+            return snapshot;
         } catch (Exception e) {
             RoseStacker.getInstance().getLogger().warning("Failed to fetch chunk snapshot at " + world.getName() + " " + chunkX + "," + chunkZ);
             e.printStackTrace();
