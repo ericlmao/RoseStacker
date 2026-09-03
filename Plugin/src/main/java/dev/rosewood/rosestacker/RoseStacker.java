@@ -14,6 +14,7 @@ import dev.rosewood.rosestacker.listener.BlockListener;
 import dev.rosewood.rosestacker.listener.BreedingListener;
 import dev.rosewood.rosestacker.listener.EntitiesLoadListener;
 import dev.rosewood.rosestacker.listener.EntityListener;
+import dev.rosewood.rosestacker.listener.EntityTrackingListener;
 import dev.rosewood.rosestacker.listener.InteractListener;
 import dev.rosewood.rosestacker.listener.ItemListener;
 import dev.rosewood.rosestacker.listener.SkyblockHookListener;
@@ -28,6 +29,7 @@ import dev.rosewood.rosestacker.manager.LocaleManager;
 import dev.rosewood.rosestacker.manager.StackManager;
 import dev.rosewood.rosestacker.manager.StackSettingManager;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
+import dev.rosewood.rosestacker.stack.StackedEntity;
 import dev.rosewood.rosestacker.utils.StackerUtils;
 import dev.rosewood.rosestacker.utils.ThreadUtils;
 import java.util.List;
@@ -80,6 +82,14 @@ public class RoseStacker extends RosePlugin {
         pluginManager.registerEvents(new StackToolListener(this), this);
         pluginManager.registerEvents(new BreedingListener(this), this);
         pluginManager.registerEvents(new BeeListener(this), this);
+
+        try {
+            Class.forName("io.papermc.paper.event.player.PlayerUntrackEntityEvent");
+            pluginManager.registerEvents(new EntityTrackingListener(this), this);
+        } catch (ClassNotFoundException e) {
+            this.getLogger().warning("Entity tracking events are unavailable on this server; stack nametags will be resent every update cycle.");
+            StackedEntity.setNametagStateTrackingEnabled(false);
+        }
 
         if (NMSUtil.isPaper() && (NMSUtil.getVersionNumber() > 26 || (NMSUtil.getVersionNumber() == 26 && NMSUtil.getMinorVersionNumber() >= 2))) {
             pluginManager.registerEvents(new ModernPaperZapListener(entityListener), this);

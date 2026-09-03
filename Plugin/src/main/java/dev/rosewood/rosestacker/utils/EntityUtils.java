@@ -143,20 +143,12 @@ public final class EntityUtils {
         if (entity2 instanceof LivingEntity)
             location2.add(0, ((LivingEntity) entity2).getEyeHeight(), 0);
 
-        Vector vector1 = location1.toVector();
-        Vector vector2 = location2.toVector();
-        Vector direction = vector2.clone().subtract(vector1).normalize();
-        double distance = vector1.distance(vector2);
-        double numSteps = distance / accuracy;
-        double stepSize = distance / numSteps;
-        for (double i = 0; i < distance; i += stepSize) {
-            Location location = location1.clone().add(direction.clone().multiply(i));
-            Material type = getLazyBlockMaterial(location);
-            if (type.isSolid() && (!requireOccluding || StackerUtils.isOccluding(type)))
-                return false;
-        }
+        World world = location1.getWorld();
+        if (world == null || !world.equals(location2.getWorld()))
+            return false;
 
-        return true;
+        return hasLineOfSight(world, location1.getX(), location1.getY(), location1.getZ(),
+                location2.getX(), location2.getY(), location2.getZ(), accuracy, requireOccluding);
     }
 
     /**
@@ -265,16 +257,75 @@ public final class EntityUtils {
 
     public static Material getLazyBlockMaterial(Location location) {
         World world = location.getWorld();
-        if (world == null || location.getBlockY() < world.getMinHeight() || location.getBlockY() >= world.getMaxHeight())
+        if (world == null)
+            return Material.AIR;
+
+        return getLazyBlockMaterial(world, location.getBlockX(), location.getBlockY(), location.getBlockZ());
+    }
+
+    /**
+     * Reads a block type through the short-lived chunk snapshot cache without allocating a Location.
+     * Unloaded chunks and out-of-bounds coordinates read as air.
+     */
+    public static Material getLazyBlockMaterial(World world, int x, int y, int z) {
+        if (y < world.getMinHeight() || y >= world.getMaxHeight())
             return Material.AIR;
 
         // TODO: Account for the maximum size of slimes and magma cubes
 
-        ChunkSnapshot snapshot = getChunkSnapshot(world, location.getBlockX() >> 4, location.getBlockZ() >> 4);
+        ChunkSnapshot snapshot = getChunkSnapshot(world, x >> 4, z >> 4);
         if (snapshot == null)
             return Material.AIR;
 
-        return snapshot.getBlockType(location.getBlockX() & 15, location.getBlockY(), location.getBlockZ() & 15);
+        return snapshot.getBlockType(x & 15, y, z & 15);
+    }
+
+    /**
+     * Checks whether a straight line between two points is free of solid (or occluding) blocks.
+     * <p>
+     * Samples the segment every {@code accuracy} blocks like the Location-based variants, but works in
+     * primitives and only reads a block when the sample crosses into a new block, so a 32 block ray costs
+     * a few dozen snapshot reads and zero allocations instead of ~40 Location and Vector clones.
+     *
+     * @param world The world both points are in
+     * @param accuracy How often to sample along the line, in blocks (0.75 recommended)
+     * @param requireOccluding true to only treat occluding blocks as obstructions
+     * @return true if nothing solid sits between the points
+     */
+    public static boolean hasLineOfSight(World world, double x1, double y1, double z1, double x2, double y2, double z2, double accuracy, boolean requireOccluding) {
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+        double dz = z2 - z1;
+        double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance <= 0)
+            return true;
+
+        double stepX = dx / distance * accuracy;
+        double stepY = dy / distance * accuracy;
+        double stepZ = dz / distance * accuracy;
+
+        int lastBlockX = Integer.MIN_VALUE, lastBlockY = Integer.MIN_VALUE, lastBlockZ = Integer.MIN_VALUE;
+        double x = x1, y = y1, z = z1;
+        for (double travelled = 0; travelled < distance; travelled += accuracy) {
+            int blockX = floorCoordinate(x);
+            int blockY = floorCoordinate(y);
+            int blockZ = floorCoordinate(z);
+            if (blockX != lastBlockX || blockY != lastBlockY || blockZ != lastBlockZ) {
+                lastBlockX = blockX;
+                lastBlockY = blockY;
+                lastBlockZ = blockZ;
+
+                Material type = getLazyBlockMaterial(world, blockX, blockY, blockZ);
+                if (type.isSolid() && (!requireOccluding || StackerUtils.isOccluding(type)))
+                    return false;
+            }
+
+            x += stepX;
+            y += stepY;
+            z += stepZ;
+        }
+
+        return true;
     }
 
     private static ChunkSnapshot getChunkSnapshot(World world, int chunkX, int chunkZ) {

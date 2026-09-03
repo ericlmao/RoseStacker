@@ -10,6 +10,7 @@ import dev.rosewood.rosestacker.nms.storage.EntityDataEntry;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorage;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorageType;
 import dev.rosewood.rosestacker.nms.storage.StorageMigrationType;
+import dev.rosewood.rosestacker.nms.util.BoundedCache;
 import dev.rosewood.rosestacker.nms.util.ReflectionUtils;
 import dev.rosewood.rosestacker.nms.v26_1_R1.entity.SoloEntitySpider;
 import dev.rosewood.rosestacker.nms.v26_1_R1.entity.SoloEntityStrider;
@@ -103,6 +104,10 @@ import sun.misc.Unsafe;
 
 @SuppressWarnings("unchecked")
 public class NMSHandlerImpl implements NMSHandler {
+
+    // Stack display names repeat across thousands of entities and are sent to many players; parse each
+    // distinct string once and share the immutable component instead of re-parsing per packet
+    private static final BoundedCache<String, Optional<Component>> NAME_COMPONENT_CACHE = new BoundedCache<>(4096);
 
     private static boolean hijackedAnyRandomSources = false;
     private static EntityDataAccessor<Boolean> value_Creeper_DATA_IS_IGNITED; // DataWatcherObject that determines if a creeper is ignited, normally private
@@ -262,7 +267,7 @@ public class NMSHandlerImpl implements NMSHandler {
     public void updateEntityNameTagForPlayer(Player player, org.bukkit.entity.Entity entity, String customName, boolean customNameVisible) {
         try {
             List<SynchedEntityData.DataValue<?>> dataValues = new ArrayList<>();
-            Optional<Component> nameComponent = Optional.ofNullable(CraftChatMessage.fromStringOrNull(customName));
+            Optional<Component> nameComponent = customName == null ? Optional.empty() : NAME_COMPONENT_CACHE.get(customName, x -> Optional.ofNullable(CraftChatMessage.fromStringOrNull(x)));
             dataValues.add(SynchedEntityData.DataValue.create(EntityDataSerializers.OPTIONAL_COMPONENT.createAccessor(2), nameComponent));
             dataValues.add(SynchedEntityData.DataValue.create(EntityDataSerializers.BOOLEAN.createAccessor(3), customNameVisible));
 

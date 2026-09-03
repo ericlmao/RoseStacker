@@ -2,6 +2,7 @@ package dev.rosewood.rosestacker.nms.v1_21_R3.hologram;
 
 import dev.rosewood.rosestacker.nms.hologram.Hologram;
 import dev.rosewood.rosestacker.nms.hologram.HologramLine;
+import dev.rosewood.rosestacker.nms.util.BoundedCache;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -21,6 +22,8 @@ import org.bukkit.craftbukkit.v1_21_R3.util.CraftChatMessage;
 import org.bukkit.entity.Player;
 
 public class HologramImpl extends Hologram {
+
+    private static final BoundedCache<String, Component> TEXT_COMPONENT_CACHE = new BoundedCache<>(2048);
 
     private static final List<SynchedEntityData.DataValue<?>> DATA_VALUES = List.of(
             SynchedEntityData.DataValue.create(EntityDataSerializers.BYTE.createAccessor(15), (byte) 3), // Billboard Constraint (Center)
@@ -59,7 +62,7 @@ public class HologramImpl extends Hologram {
                 continue;
 
             List<SynchedEntityData.DataValue<?>> dataValues = new ArrayList<>(DATA_VALUES);
-            Component chatMessage = CraftChatMessage.fromStringOrNull(line.getText());
+            Component chatMessage = TEXT_COMPONENT_CACHE.get(line.getText(), CraftChatMessage::fromStringOrNull);
             dataValues.add(SynchedEntityData.DataValue.create(EntityDataSerializers.COMPONENT.createAccessor(23), chatMessage));
 
             for (Player player : players) {

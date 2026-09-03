@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -33,6 +34,7 @@ public class LocaleManager extends AbstractLocaleManager {
 
     private List<String> translationLocales;
     private int generation;
+    private final Map<String, Boolean> placeholderUsageCache = new ConcurrentHashMap<>();
 
     public LocaleManager(RosePlugin rosePlugin) {
         super(rosePlugin);
@@ -46,6 +48,44 @@ public class LocaleManager extends AbstractLocaleManager {
         super.reload();
 
         this.generation++;
+        this.placeholderUsageCache.clear();
+    }
+
+    /**
+     * Checks whether any line of a locale message references one of the given placeholders.
+     * <p>
+     * Lets callers that rebuild hologram or nametag text every cycle skip fetching values (spawner delay,
+     * spawn totals) that the configured message never displays, so their text cache can hit instead of
+     * rebuilding the same lines each cycle. Cached per message key until the next locale reload.
+     *
+     * @param messageKey The key of the message
+     * @param placeholders The placeholder names, without surrounding percent signs
+     * @return true if the message uses at least one of the placeholders
+     */
+    public boolean usesPlaceholder(String messageKey, String... placeholders) {
+        String cacheKey = messageKey + '|' + String.join(",", placeholders);
+        Boolean cached = this.placeholderUsageCache.get(cacheKey);
+        if (cached != null)
+            return cached;
+
+        boolean uses = false;
+        try {
+            for (String line : this.getLocaleStrings(messageKey)) {
+                for (String placeholder : placeholders) {
+                    if (line.contains('%' + placeholder + '%')) {
+                        uses = true;
+                        break;
+                    }
+                }
+                if (uses)
+                    break;
+            }
+        } catch (IllegalStateException e) {
+            uses = true; // Unknown message, assume the worst so nothing is skipped
+        }
+
+        this.placeholderUsageCache.put(cacheKey, uses);
+        return uses;
     }
 
     /**

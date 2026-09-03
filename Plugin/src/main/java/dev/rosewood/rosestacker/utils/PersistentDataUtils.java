@@ -28,6 +28,16 @@ public final class PersistentDataUtils {
     private static final String SPAWNED_FROM_DISPENSER_METADATA_NAME = "dispenser_spawned";
     private static final String TOTAL_SPAWNS_METADATA_NAME = "total_spawns";
 
+    // Built on first use rather than in a static initializer so the plugin instance is guaranteed to exist
+    private static NamespacedKey totalSpawnsKey;
+
+    private static NamespacedKey getTotalSpawnsKey() {
+        NamespacedKey key = totalSpawnsKey;
+        if (key == null)
+            totalSpawnsKey = key = new NamespacedKey(RoseStacker.getInstance(), TOTAL_SPAWNS_METADATA_NAME);
+        return key;
+    }
+
     public static void setUnstackable(Entity entity, boolean unstackable) {
         RosePlugin rosePlugin = RoseStacker.getInstance();
         if (unstackable) {
@@ -163,7 +173,7 @@ public final class PersistentDataUtils {
         RosePlugin rosePlugin = RoseStacker.getInstance();
         PersistentDataContainer dataContainer = spawner.getPersistentDataContainer();
         if (dataContainer != null) {
-            NamespacedKey key = new NamespacedKey(rosePlugin, TOTAL_SPAWNS_METADATA_NAME);
+            NamespacedKey key = getTotalSpawnsKey();
             if (!dataContainer.has(key, PersistentDataType.LONG)) {
                 dataContainer.set(key, PersistentDataType.LONG, amount);
             } else {
@@ -174,13 +184,11 @@ public final class PersistentDataUtils {
 
     public static long getTotalSpawnCount(StackedSpawnerTile spawner) {
         try {
-            RosePlugin rosePlugin = RoseStacker.getInstance();
             PersistentDataContainer persistentDataContainer = spawner.getPersistentDataContainer();
             if (persistentDataContainer == null)
                 return 0;
 
-            NamespacedKey key = new NamespacedKey(rosePlugin, TOTAL_SPAWNS_METADATA_NAME);
-            Long amount = persistentDataContainer.get(key, PersistentDataType.LONG);
+            Long amount = persistentDataContainer.get(getTotalSpawnsKey(), PersistentDataType.LONG);
             return amount != null ? amount : 0;
         } catch (ConcurrentModificationException e) {
             return 0; // StackedSpawner#updateDisplay can cause a CME sometimes here when run async
