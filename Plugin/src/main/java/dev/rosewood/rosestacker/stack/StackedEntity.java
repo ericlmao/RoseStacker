@@ -34,6 +34,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -74,6 +78,19 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     private boolean displayNameVisible;
     private double x, y, z;
     private int lastModifiedTicks;
+
+    // The nametag state each tracking player last received, so periodic nametag passes only send a packet
+    // when the name or visibility actually changed for that player. Created lazily; most stacks never have
+    // a player near them. Entries are dropped when a player stops tracking the entity (see
+    // EntityTrackingListener) so a re-tracked entity, whose client just received vanilla metadata, is resent.
+    private volatile Map<UUID, NametagState> sentNametags;
+
+    // Without track/untrack events we cannot tell when a client dropped our tag, so fall back to resending
+    private static volatile boolean nametagStateTrackingEnabled = true;
+
+    public static void setNametagStateTrackingEnabled(boolean enabled) {
+        nametagStateTrackingEnabled = enabled;
+    }
 
     private EntityStackSettings stackSettings;
 
@@ -657,16 +674,71 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         this.displayName = null;
         String displayName = this.getDisplayName();
         boolean displayNameVisible = this.displayNameVisible;
-        Location location = this.entity.getLocation();
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            ThreadUtils.runOnEntity(player, () -> {
-                if (!player.isValid() || !player.getWorld().equals(location.getWorld()) || player.getLocation().distanceSquared(location) > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
-                    return;
 
-                NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, this.entity, displayName, displayNameVisible);
+        // Only the players whose client actually has this entity can see the tag; anyone else gets the
+        // correct tag from the nametag pass once they start tracking it. This replaces a loop over every
+        // online player that scheduled a task per player just to distance-check them.
+        for (Player player : this.entity.getTrackedBy()) {
+            if (!this.markNametagSent(player.getUniqueId(), displayName, displayNameVisible))
+                continue;
+
+            ThreadUtils.runOnEntity(player, () -> {
+                if (player.isValid())
+                    NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, this.entity, displayName, displayNameVisible);
             });
         }
     }
+
+    /**
+     * Records the nametag state about to be sent to a player.
+     *
+     * @param playerId The player the tag is being sent to
+     * @param displayName The name being sent, nullable
+     * @param visible Whether the tag is being sent as visible
+     * @return true if this differs from what the player last received and a packet should be sent
+     */
+    public boolean markNametagSent(UUID playerId, String displayName, boolean visible) {
+        if (!nametagStateTrackingEnabled)
+            return true;
+
+        Map<UUID, NametagState> sent = this.sentNametags;
+        if (sent == null) {
+            synchronized (this) {
+                sent = this.sentNametags;
+                if (sent == null)
+                    this.sentNametags = sent = new ConcurrentHashMap<>(4);
+            }
+        }
+
+        NametagState previous = sent.get(playerId);
+        if (previous != null && previous.visible() == visible && Objects.equals(previous.displayName(), displayName))
+            return false;
+
+        sent.put(playerId, new NametagState(displayName, visible));
+        return true;
+    }
+
+    /**
+     * Forgets what a player last received so the next nametag pass sends them the tag again.
+     *
+     * @param playerId The player to forget
+     */
+    public void forgetNametagState(UUID playerId) {
+        Map<UUID, NametagState> sent = this.sentNametags;
+        if (sent != null)
+            sent.remove(playerId);
+    }
+
+    /**
+     * Forgets what every player last received.
+     */
+    public void clearNametagStates() {
+        Map<UUID, NametagState> sent = this.sentNametags;
+        if (sent != null)
+            sent.clear();
+    }
+
+    private record NametagState(String displayName, boolean visible) { }
 
     @Override
     public void updateDisplaySafely() {

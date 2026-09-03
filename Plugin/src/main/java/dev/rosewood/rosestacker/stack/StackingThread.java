@@ -364,17 +364,30 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         if (entity == null)
             return;
 
+        // Coarse cull off-thread first. With thousands of stacks and a hundred players, scheduling an
+        // entity task per stack just to discover nobody is near it was most of this pass's cost.
+        // Reading the position here is racy but harmless; the exact check happens on the entity's thread.
+        List<PlayerNametagSnapshot> nearby = this.collectNearbySnapshots(snapshots, entity.getLocation());
+        if (nearby == null)
+            return;
+
         ThreadUtils.runOnEntity(entity, () -> {
             if (!entity.isValid() || entity.isDead())
                 return;
 
+            // Only players whose client has this entity can see its tag
+            Set<Player> tracking = entity.getTrackedBy();
+            if (tracking.isEmpty())
+                return;
+
             Location entityLocation = entity.getLocation();
             World entityWorld = entityLocation.getWorld();
+            double targetX = entityLocation.getX(), targetY = entityLocation.getY() + entity.getEyeHeight(), targetZ = entityLocation.getZ();
             String displayName = null;
             boolean displayNameComputed = false;
-            for (PlayerNametagSnapshot snapshot : snapshots) {
+            for (PlayerNametagSnapshot snapshot : nearby) {
                 Player player = snapshot.player();
-                if (!player.isValid())
+                if (!player.isValid() || !tracking.contains(player))
                     continue;
 
                 Location playerLocation = snapshot.location();
@@ -386,10 +399,8 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                     continue;
 
                 boolean visible = distanceSqrd < this.entityDynamicViewRangeSqrd;
-                if (visible && this.entityDynamicWallDetection) {
-                    Location targetLocation = entityLocation.clone().add(0, entity.getEyeHeight(), 0);
-                    visible = this.hasLineOfSight(playerLocation, targetLocation, 0.75, true);
-                }
+                if (visible && this.entityDynamicWallDetection)
+                    visible = EntityUtils.hasLineOfSight(entityWorld, playerLocation.getX(), playerLocation.getY(), playerLocation.getZ(), targetX, targetY, targetZ, 0.75, true);
 
                 if (!displayNameComputed) {
                     // Also computes the isDisplayNameVisible state, so this must be called first
@@ -398,7 +409,11 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                 }
 
                 boolean displayNameVisible = stackedEntity.isDisplayNameVisible() && visible;
+                boolean sendNametag = stackedEntity.markNametagSent(player.getUniqueId(), displayName, displayNameVisible);
                 boolean spawnParticles = visible && snapshot.holdingStackingTool();
+                if (!sendNametag && !spawnParticles)
+                    continue; // Player already has this exact tag, nothing to send
+
                 Location particleLocation = null;
                 DustOptions dustOptions = null;
                 if (spawnParticles) {
@@ -414,7 +429,8 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                     if (!player.isValid())
                         return;
 
-                    NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, entity, finalDisplayName, displayNameVisible);
+                    if (sendNametag)
+                        NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, entity, finalDisplayName, displayNameVisible);
                     if (finalSpawnParticles)
                         player.spawnParticle(VersionUtils.DUST, finalParticleLocation, 1, 0.0, 0.0, 0.0, 0.0, finalDustOptions);
                 });
@@ -427,15 +443,23 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         if (item == null)
             return;
 
+        List<PlayerNametagSnapshot> nearby = this.collectNearbySnapshots(snapshots, item.getLocation());
+        if (nearby == null)
+            return;
+
         ThreadUtils.runOnEntity(item, () -> {
             if (!item.isValid() || !item.isCustomNameVisible())
                 return;
 
+            Set<Player> tracking = item.getTrackedBy();
+            if (tracking.isEmpty())
+                return;
+
             Location itemLocation = item.getLocation();
             World itemWorld = itemLocation.getWorld();
-            for (PlayerNametagSnapshot snapshot : snapshots) {
+            for (PlayerNametagSnapshot snapshot : nearby) {
                 Player player = snapshot.player();
-                if (!player.isValid())
+                if (!player.isValid() || !tracking.contains(player))
                     continue;
 
                 Location playerLocation = snapshot.location();
@@ -448,7 +472,7 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
                 boolean visible = distanceSqrd < this.itemDynamicViewRangeSqrd;
                 if (visible && this.itemDynamicWallDetection)
-                    visible = this.hasLineOfSight(playerLocation, itemLocation, 0.75, true);
+                    visible = EntityUtils.hasLineOfSight(itemWorld, playerLocation.getX(), playerLocation.getY(), playerLocation.getZ(), itemLocation.getX(), itemLocation.getY(), itemLocation.getZ(), 0.75, true);
 
                 boolean finalVisible = visible;
                 ThreadUtils.runOnEntity(player, () -> {
@@ -459,26 +483,48 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         });
     }
 
-    private record PlayerNametagSnapshot(Player player, Location location, boolean holdingStackingTool) {}
+    /**
+     * Picks the player snapshots that could possibly see something at a location. This is the cheap
+     * off-thread filter; callers re-check on the entity's thread.
+     *
+     * @return the snapshots within the assumed visibility range, or null if there are none
+     */
+    private List<PlayerNametagSnapshot> collectNearbySnapshots(List<PlayerNametagSnapshot> snapshots, Location location) {
+        World world = location.getWorld();
+        if (world == null)
+            return null;
 
-    private boolean hasLineOfSight(Location location1, Location location2, double accuracy, boolean requireOccluding) {
-        Vector vector1 = location1.toVector();
-        Vector vector2 = location2.toVector();
-        double distance = vector1.distance(vector2);
-        if (distance <= 0)
-            return true;
+        List<PlayerNametagSnapshot> nearby = null;
+        for (PlayerNametagSnapshot snapshot : snapshots) {
+            Location playerLocation = snapshot.location();
+            if (!world.equals(playerLocation.getWorld()))
+                continue;
 
-        Vector direction = vector2.clone().subtract(vector1).normalize();
-        double numSteps = distance / accuracy;
-        double stepSize = distance / numSteps;
-        for (double i = 0; i < distance; i += stepSize) {
-            Location location = location1.clone().add(direction.clone().multiply(i));
-            Material type = EntityUtils.getLazyBlockMaterial(location);
-            if (type.isSolid() && (!requireOccluding || StackerUtils.isOccluding(type)))
-                return false;
+            double dx = playerLocation.getX() - location.getX();
+            double dy = playerLocation.getY() - location.getY();
+            double dz = playerLocation.getZ() - location.getZ();
+            if (dx * dx + dy * dy + dz * dz > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
+                continue;
+
+            if (nearby == null)
+                nearby = new ArrayList<>(4);
+            nearby.add(snapshot);
         }
 
-        return true;
+        return nearby;
+    }
+
+    private record PlayerNametagSnapshot(Player player, Location location, boolean holdingStackingTool) {}
+
+    /**
+     * Forgets the nametag state every stack in this world holds for a player, so they are resent the
+     * next time they can see the stack. Called when a player disconnects.
+     *
+     * @param playerId The player to forget
+     */
+    public void forgetNametagPlayer(UUID playerId) {
+        for (StackedEntity stackedEntity : this.stackedEntities.values())
+            stackedEntity.forgetNametagState(playerId);
     }
 
     private void updateHolograms() {

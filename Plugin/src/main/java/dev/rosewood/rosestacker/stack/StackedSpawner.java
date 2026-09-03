@@ -160,21 +160,21 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
         if (hologram != null && hologram.getWatchers().isEmpty())
             return;
 
-        // Spawners only count down while a player is within their activation range, so the placeholder
-        // values for the vast majority of loaded spawners are identical from one hologram cycle to the
-        // next. Rebuilding the text means a locale lookup plus a colorify pass per line every cycle, so
-        // reuse the last result whenever nothing that feeds into it has changed.
+        // Rebuilding the text means a locale lookup plus a placeholder and colorify pass per line, so reuse the
+        // last result whenever nothing that feeds into it has changed. Only read the values the configured
+        // message actually displays: the spawn delay changes every tick for any spawner with a player in
+        // range, and including it in the key when the hologram never shows it forced a rebuild every cycle.
         boolean empty = this.spawnerTile.getSpawnerType().isEmpty();
         boolean single = this.size == 1 && !SettingKey.SPAWNER_DISPLAY_TAGS_SINGLE_AMOUNT.get();
-        int delay = this.spawnerTile.getDelay();
-        long totalSpawned = PersistentDataUtils.getTotalSpawnCount(this.spawnerTile);
+        String messageKey = "spawner-hologram-display" + (empty ? "-empty" : "") + (single ? "-single" : "");
+        int delay = localeManager.usesPlaceholder(messageKey, "time_remaining", "ticks_remaining") ? this.spawnerTile.getDelay() : 0;
+        long totalSpawned = localeManager.usesPlaceholder(messageKey, "total_spawned") ? PersistentDataUtils.getTotalSpawnCount(this.spawnerTile) : 0;
         int maxStackSize = this.stackSettings.getMaxStackSize();
         String displayKey = localeManager.getGeneration() + "|" + this.size + "|" + delay + "|" + totalSpawned
-                + "|" + maxStackSize + "|" + empty + "|" + single + "|" + this.stackSettings.getDisplayName();
+                + "|" + maxStackSize + "|" + messageKey + "|" + this.stackSettings.getDisplayName();
 
         List<String> displayStrings = this.lastDisplayStrings;
         if (displayStrings == null || !displayKey.equals(this.lastDisplayKey)) {
-            String messageKey = "spawner-hologram-display" + (empty ? "-empty" : "") + (single ? "-single" : "");
             displayStrings = localeManager.getLocaleMessages(messageKey, this.getPlaceholders(delay, totalSpawned, maxStackSize));
             this.lastDisplayStrings = displayStrings;
             this.lastDisplayKey = displayKey;
