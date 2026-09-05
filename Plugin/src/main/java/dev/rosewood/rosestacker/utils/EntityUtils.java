@@ -1,7 +1,5 @@
 package dev.rosewood.rosestacker.utils;
 
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
@@ -10,9 +8,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
-import org.bukkit.ChunkSnapshot;
+import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -40,10 +37,6 @@ public final class EntityUtils {
     private static final boolean HAS_FROM_MOB_SPAWNER = NMSUtil.isPaper() && NMSUtil.getVersionNumber() >= 19;
     private static final Random RANDOM = new Random();
     private static Map<EntityType, BoundingBox> cachedBoundingBoxes;
-
-    private static final Cache<ChunkLocation, ChunkSnapshot> chunkSnapshotCache = CacheBuilder.newBuilder()
-            .expireAfterWrite(3, TimeUnit.SECONDS)
-            .build();
 
     /**
      * Get loot for a given entity
@@ -210,7 +203,7 @@ public final class EntityUtils {
     }
 
     /**
-     * Walks the blocks an EntityType would intersect at a Location, holding onto one chunk snapshot for as
+     * Walks the blocks an EntityType would intersect at a Location, holding onto one loaded chunk for as
      * long as consecutive blocks stay in the same chunk.
      *
      * @return true if every block was visited, false if the consumer stopped the walk early
@@ -228,24 +221,26 @@ public final class EntityUtils {
         int minHeight = world.getMinHeight();
         int maxHeight = world.getMaxHeight();
 
-        ChunkSnapshot snapshot = null;
-        int snapshotChunkX = 0;
-        int snapshotChunkZ = 0;
+        Chunk chunk = null;
+        int chunkChunkX = 0;
+        int chunkChunkZ = 0;
+        boolean chunkResolved = false;
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
                 int chunkX = x >> 4;
                 int chunkZ = z >> 4;
-                if (snapshot == null || chunkX != snapshotChunkX || chunkZ != snapshotChunkZ) {
-                    snapshot = getChunkSnapshot(world, chunkX, chunkZ);
-                    snapshotChunkX = chunkX;
-                    snapshotChunkZ = chunkZ;
+                if (!chunkResolved || chunkX != chunkChunkX || chunkZ != chunkChunkZ) {
+                    chunk = getLoadedChunk(world, chunkX, chunkZ);
+                    chunkChunkX = chunkX;
+                    chunkChunkZ = chunkZ;
+                    chunkResolved = true;
                 }
 
                 for (int y = minY; y <= maxY; y++) {
-                    // Out of build bounds and unreadable chunks both read as air, matching getLazyBlockMaterial
-                    Material type = snapshot == null || y < minHeight || y >= maxHeight
+                    // Out of build bounds and unloaded chunks both read as air, matching getLazyBlockMaterial
+                    Material type = chunk == null || y < minHeight || y >= maxHeight
                             ? Material.AIR
-                            : snapshot.getBlockType(x & 15, y, z & 15);
+                            : chunk.getBlock(x & 15, y, z & 15).getType();
                     if (!consumer.accept(x, y, z, type))
                         return false;
                 }
@@ -264,8 +259,8 @@ public final class EntityUtils {
     }
 
     /**
-     * Reads a block type through the short-lived chunk snapshot cache without allocating a Location.
-     * Unloaded chunks and out-of-bounds coordinates read as air.
+     * Reads a block type straight out of the loaded chunk without allocating a Location and without
+     * copying any chunk data. Unloaded chunks and out-of-bounds coordinates read as air.
      */
     public static Material getLazyBlockMaterial(World world, int x, int y, int z) {
         if (y < world.getMinHeight() || y >= world.getMaxHeight())
@@ -273,11 +268,11 @@ public final class EntityUtils {
 
         // TODO: Account for the maximum size of slimes and magma cubes
 
-        ChunkSnapshot snapshot = getChunkSnapshot(world, x >> 4, z >> 4);
-        if (snapshot == null)
+        Chunk chunk = getLoadedChunk(world, x >> 4, z >> 4);
+        if (chunk == null)
             return Material.AIR;
 
-        return snapshot.getBlockType(x & 15, y, z & 15);
+        return chunk.getBlock(x & 15, y, z & 15).getType();
     }
 
     /**
@@ -285,7 +280,9 @@ public final class EntityUtils {
      * <p>
      * Samples the segment every {@code accuracy} blocks like the Location-based variants, but works in
      * primitives and only reads a block when the sample crosses into a new block, so a 32 block ray costs
-     * a few dozen snapshot reads and zero allocations instead of ~40 Location and Vector clones.
+     * a few dozen block reads instead of ~40 Location and Vector clones. The loaded chunk is held for as
+     * long as consecutive samples stay inside it, so a ray never looks a chunk up more than once per
+     * chunk it crosses.
      *
      * @param world The world both points are in
      * @param accuracy How often to sample along the line, in blocks (0.75 recommended)
@@ -304,6 +301,13 @@ public final class EntityUtils {
         double stepY = dy / distance * accuracy;
         double stepZ = dz / distance * accuracy;
 
+        int minHeight = world.getMinHeight();
+        int maxHeight = world.getMaxHeight();
+
+        Chunk chunk = null;
+        int chunkChunkX = 0, chunkChunkZ = 0;
+        boolean chunkResolved = false;
+
         int lastBlockX = Integer.MIN_VALUE, lastBlockY = Integer.MIN_VALUE, lastBlockZ = Integer.MIN_VALUE;
         double x = x1, y = y1, z = z1;
         for (double travelled = 0; travelled < distance; travelled += accuracy) {
@@ -315,7 +319,19 @@ public final class EntityUtils {
                 lastBlockY = blockY;
                 lastBlockZ = blockZ;
 
-                Material type = getLazyBlockMaterial(world, blockX, blockY, blockZ);
+                int chunkX = blockX >> 4;
+                int chunkZ = blockZ >> 4;
+                if (!chunkResolved || chunkX != chunkChunkX || chunkZ != chunkChunkZ) {
+                    chunk = getLoadedChunk(world, chunkX, chunkZ);
+                    chunkChunkX = chunkX;
+                    chunkChunkZ = chunkZ;
+                    chunkResolved = true;
+                }
+
+                // Unloaded chunks and out-of-bounds coordinates read as air, matching getLazyBlockMaterial
+                Material type = chunk == null || blockY < minHeight || blockY >= maxHeight
+                        ? Material.AIR
+                        : chunk.getBlock(blockX & 15, blockY, blockZ & 15).getType();
                 if (type.isSolid() && (!requireOccluding || StackerUtils.isOccluding(type)))
                     return false;
             }
@@ -328,25 +344,29 @@ public final class EntityUtils {
         return true;
     }
 
-    private static ChunkSnapshot getChunkSnapshot(World world, int chunkX, int chunkZ) {
+    /**
+     * Gets a chunk only if it is already loaded, for callers that read a handful of blocks and must not
+     * pay for a chunk load or a chunk copy.
+     * <p>
+     * This used to take a ChunkSnapshot and cache it for a few seconds, which copied every
+     * {@code PalettedContainer} in the chunk (all 24 sections on a 1.21 overworld) just to answer a
+     * nametag or spawn-condition question about a few blocks. Reading the live chunk costs a map lookup
+     * and no copying, and it also removes the staleness window the cache had.
+     *
+     * @return the loaded chunk, or null if it is not loaded
+     */
+    private static Chunk getLoadedChunk(World world, int chunkX, int chunkZ) {
         try {
-            ChunkLocation pair = new ChunkLocation(world.getName(), chunkX, chunkZ);
-            ChunkSnapshot snapshot = chunkSnapshotCache.getIfPresent(pair);
-            if (snapshot != null)
-                return snapshot;
-
-            // Never load chunks here; snapshotting an unloaded chunk fires a synchronous chunk load whose
-            // ChunkLoadEvent re-enters this method for the same chunk and recurses until the server dies
+            // Never load chunks here; loading one fires a synchronous chunk load whose ChunkLoadEvent can
+            // re-enter this method for the same chunk and recurse until the server dies
             if (!world.isChunkLoaded(chunkX, chunkZ))
                 return null;
 
-            // Snapshot outside a cache loader so a re-entrant call for the same chunk can't trip
-            // Guava's recursive load detection
-            snapshot = world.getChunkAt(chunkX, chunkZ).getChunkSnapshot();
-            chunkSnapshotCache.put(pair, snapshot);
-            return snapshot;
+            return world.getChunkAt(chunkX, chunkZ);
         } catch (Exception e) {
-            RoseStacker.getInstance().getLogger().warning("Failed to fetch chunk snapshot at " + world.getName() + " " + chunkX + "," + chunkZ);
+            // Kept from the snapshot version this replaced: a server that refuses the read (a region
+            // threaded server asked from the wrong thread, for example) reads as air rather than throwing
+            RoseStacker.getInstance().getLogger().warning("Failed to fetch chunk at " + world.getName() + " " + chunkX + "," + chunkZ);
             e.printStackTrace();
             return null;
         }
@@ -409,7 +429,5 @@ public final class EntityUtils {
     public static void clearCache() {
         cachedBoundingBoxes = null;
     }
-
-    private record ChunkLocation(String world, int x, int z) { }
 
 }

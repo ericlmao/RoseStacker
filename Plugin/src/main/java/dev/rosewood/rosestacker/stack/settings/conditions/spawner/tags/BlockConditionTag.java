@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
 
 public class BlockConditionTag extends ConditionTag {
 
@@ -20,7 +19,7 @@ public class BlockConditionTag extends ConditionTag {
 
     @Override
     public boolean check(StackedSpawner stackedSpawner, Block spawnBlock) {
-        return this.blocks.contains(EntityUtils.getLazyBlockMaterial(spawnBlock.getRelative(BlockFace.DOWN).getLocation()));
+        return this.blocks.contains(EntityUtils.getLazyBlockMaterial(spawnBlock.getWorld(), spawnBlock.getX(), spawnBlock.getY() - 1, spawnBlock.getZ()));
     }
 
     @Override
