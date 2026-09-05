@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Predicate;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -171,15 +171,28 @@ public class EntityCacheManager extends Manager {
     }
 
     private void addWorldEntities(World world, List<Entity> worldEntities) {
+        // The server hands entities back grouped by the chunk they live in, so consecutive entities almost
+        // always land in the same cell. Remembering the last cell turns a ChunkLocation allocation plus a
+        // concurrent map lookup per entity into one per cell.
+        String worldName = world.getName();
+        int lastX = 0, lastY = 0, lastZ = 0;
+        Collection<Entity> lastEntities = null;
+
         if (DIRECT_GETTERS) {
             for (Entity entity : worldEntities) {
                 EntityType type = entity.getType();
                 if (type != VersionUtils.ITEM && (!type.isAlive() || type == EntityType.PLAYER || type == EntityType.ARMOR_STAND))
                     continue;
 
-                ChunkLocation chunkLocation = new ChunkLocation(world.getName(), (int) entity.getX() >> 4, (int) entity.getY() >> 4, (int) entity.getZ() >> 4);
-                Collection<Entity> entities = this.entityCache.computeIfAbsent(chunkLocation, k -> this.createCollection());
-                entities.add(entity);
+                int x = (int) entity.getX() >> 4, y = (int) entity.getY() >> 4, z = (int) entity.getZ() >> 4;
+                if (lastEntities == null || x != lastX || y != lastY || z != lastZ) {
+                    lastEntities = this.entityCache.computeIfAbsent(new ChunkLocation(worldName, x, y, z), k -> this.createCollection());
+                    lastX = x;
+                    lastY = y;
+                    lastZ = z;
+                }
+
+                lastEntities.add(entity);
             }
         } else {
             Location location = new Location(world, 0, 0, 0);
@@ -189,15 +202,27 @@ public class EntityCacheManager extends Manager {
                     continue;
 
                 entity.getLocation(location); // re-use location object to dump positions so we aren't constantly remaking Location objects
-                ChunkLocation chunkLocation = new ChunkLocation(world.getName(), (int) location.getX() >> 4, (int) location.getY() >> 4, (int) location.getZ() >> 4);
-                Collection<Entity> entities = this.entityCache.computeIfAbsent(chunkLocation, k -> this.createCollection());
-                entities.add(entity);
+                int x = (int) location.getX() >> 4, y = (int) location.getY() >> 4, z = (int) location.getZ() >> 4;
+                if (lastEntities == null || x != lastX || y != lastY || z != lastZ) {
+                    lastEntities = this.entityCache.computeIfAbsent(new ChunkLocation(worldName, x, y, z), k -> this.createCollection());
+                    lastX = x;
+                    lastY = y;
+                    lastZ = z;
+                }
+
+                lastEntities.add(entity);
             }
         }
     }
 
+    /**
+     * @return a collection for one cell of the cache
+     * @implNote This used to be a LinkedBlockingDeque, which allocates a ReentrantLock and two Conditions
+     *           per cell. The cache rebuilds every world's cells from scratch every three seconds and
+     *           never blocks on the collections, so a lock-free queue does the same job for much less.
+     */
     private Collection<Entity> createCollection() {
-        return new LinkedBlockingDeque<>();
+        return new ConcurrentLinkedQueue<>();
     }
 
     /**

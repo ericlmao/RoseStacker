@@ -399,8 +399,11 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                     continue;
 
                 boolean visible = distanceSqrd < this.entityDynamicViewRangeSqrd;
-                if (visible && this.entityDynamicWallDetection)
-                    visible = EntityUtils.hasLineOfSight(entityWorld, playerLocation.getX(), playerLocation.getY(), playerLocation.getZ(), targetX, targetY, targetZ, 0.75, true);
+                if (visible && this.entityDynamicWallDetection) {
+                    double playerX = playerLocation.getX(), playerY = playerLocation.getY(), playerZ = playerLocation.getZ();
+                    visible = stackedEntity.checkLineOfSight(player.getUniqueId(), playerX, playerY, playerZ, targetX, targetY, targetZ,
+                            () -> EntityUtils.hasLineOfSight(entityWorld, playerX, playerY, playerZ, targetX, targetY, targetZ, 0.75, true));
+                }
 
                 if (!displayNameComputed) {
                     // Also computes the isDisplayNameVisible state, so this must be called first

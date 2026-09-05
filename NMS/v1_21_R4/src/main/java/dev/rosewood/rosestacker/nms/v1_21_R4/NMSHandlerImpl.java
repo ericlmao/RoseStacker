@@ -24,6 +24,7 @@ import dev.rosewood.rosestacker.stack.StackedSpawner;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
@@ -511,8 +512,13 @@ public class NMSHandlerImpl implements NMSHandler {
     @Override
     public List<org.bukkit.entity.Entity> getEntities(World world) {
         CraftWorld craftWorld = (CraftWorld) world;
-        List<org.bukkit.entity.Entity> entities = new ArrayList<>();
-        for (Entity entity : craftWorld.getNMSEntities())
+        // Presized; the entity cache calls this for every world every three seconds, and letting the list
+        // grow from empty means a handful of array copies over several thousand entities each time
+        Iterable<Entity> nmsEntities = craftWorld.getNMSEntities();
+        List<org.bukkit.entity.Entity> entities = nmsEntities instanceof Collection<?> collection
+                ? new ArrayList<>(collection.size())
+                : new ArrayList<>();
+        for (Entity entity : nmsEntities)
             entities.add(entity.getBukkitEntity());
         return entities;
     }
