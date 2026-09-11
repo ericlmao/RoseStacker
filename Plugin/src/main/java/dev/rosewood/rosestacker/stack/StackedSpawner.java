@@ -38,6 +38,8 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
     private SpawnerStackSettings stackSettings;
     private String lastDisplayKey;
     private List<String> lastDisplayStrings;
+    private Location hologramLocation;
+    private double hologramLocationOffset;
 
     public StackedSpawner(int size, Block spawner, boolean placedByPlayer, boolean updateDisplay) {
         if (spawner.getType() != Material.SPAWNER)
@@ -215,8 +217,23 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
         return !hologram.getWatchers().isEmpty();
     }
 
+    /**
+     * @return the Location of this spawner's hologram
+     * @implNote The returned Location is shared and must not be mutated by callers. Block#getLocation
+     *           allocates, and this is called for every loaded spawner on every hologram cycle from both
+     *           {@link #needsDisplayUpdate} and {@link #updateDisplay}. The block never moves, so the only
+     *           input that can change is the configured height offset, which is compared against the one
+     *           the cached Location was built with so a reload picks the new value up.
+     */
     public Location getHologramLocation() {
-        return this.block.getLocation().add(0.5, SettingKey.SPAWNER_DISPLAY_TAGS_HEIGHT_OFFSET.get(), 0.5);
+        double heightOffset = SettingKey.SPAWNER_DISPLAY_TAGS_HEIGHT_OFFSET.get();
+        Location hologramLocation = this.hologramLocation;
+        if (hologramLocation == null || this.hologramLocationOffset != heightOffset) {
+            hologramLocation = this.block.getLocation().add(0.5, heightOffset, 0.5);
+            this.hologramLocationOffset = heightOffset;
+            this.hologramLocation = hologramLocation;
+        }
+        return hologramLocation;
     }
 
     @Override
