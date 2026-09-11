@@ -182,13 +182,20 @@ public class MobSpawningMethod implements SpawningMethod {
 
                 if (!unmetConditions.isEmpty()) {
                     invalidOffsets.add(offsetKey);
+
+                    // Only the random search is on a budget; re-checking a cached offset is a few probes.
+                    // A cached offset that no longer passes is dropped from the cache here and that is all
+                    // it does: it is not counted as an attempt, so counting its unmet conditions would
+                    // report failure rates against a denominator the attempts never included. The report is
+                    // computed from the random attempts alone, exactly as it was before the cache existed.
+                    if (fromCache)
+                        continue;
+
                     totalInvalidLocations += unmetConditions.size();
                     for (ConditionTag conditionTag : unmetConditions)
                         unmetConditionCounts.merge(conditionTag, 1, Integer::sum);
 
-                    // Only the random search is on a budget; re-checking a cached offset is a few probes
-                    if (!fromCache)
-                        attempts++;
+                    attempts++;
                     continue;
                 }
 
