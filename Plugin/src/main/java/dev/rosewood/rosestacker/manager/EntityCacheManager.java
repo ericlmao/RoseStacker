@@ -10,15 +10,16 @@ import dev.rosewood.rosestacker.stack.StackingThread;
 import dev.rosewood.rosestacker.utils.VersionUtils;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.function.ToIntFunction;
+import java.util.logging.Level;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
@@ -30,24 +31,23 @@ public class EntityCacheManager extends Manager {
     private static final boolean DIRECT_GETTERS = NMSUtil.isPaper() && (NMSUtil.getVersionNumber() > 20 || (NMSUtil.getVersionNumber() == 20 && NMSUtil.getMinorVersionNumber() >= 4));
 
     /**
+     * The largest world index the cell key can hold. Indices are handed out per snapshot over the worlds
+     * that are stacking at that moment, so this is a limit on worlds loaded at once, not over time.
+     */
+    private static final int MAX_WORLD_INDEX = 0xFFF;
+
+    /**
      * The cache is rebuilt from scratch every refresh and published by swapping this reference, so readers
      * always iterate a complete cache instead of one that is being cleared and refilled underneath them.
      * Grab the reference once at the start of a read and use it for the whole pass.
      */
-    private volatile Map<Long, Collection<Entity>> entityCache;
-    /**
-     * Cells used to be keyed by a record holding the world name, which hashed a String per lookup. Worlds
-     * get a small dense index instead so the whole key fits in a long.
-     */
-    private final Map<UUID, Integer> worldIndices;
-    private final AtomicInteger nextWorldIndex;
+    private volatile CacheSnapshot snapshot;
+    private boolean worldLimitWarned;
     private ScheduledTask refreshTask;
 
     public EntityCacheManager(RosePlugin rosePlugin) {
         super(rosePlugin);
-        this.entityCache = new ConcurrentHashMap<>();
-        this.worldIndices = new ConcurrentHashMap<>();
-        this.nextWorldIndex = new AtomicInteger();
+        this.snapshot = CacheSnapshot.empty();
     }
 
     @Override
@@ -57,7 +57,7 @@ public class EntityCacheManager extends Manager {
 
     @Override
     public void disable() {
-        this.entityCache = new ConcurrentHashMap<>();
+        this.snapshot = CacheSnapshot.empty();
 
         if (this.refreshTask != null) {
             this.refreshTask.cancel();
@@ -95,8 +95,12 @@ public class EntityCacheManager extends Manager {
         int minZ = (int) boundingBox.getMinZ() >> 4;
         int maxZ = (int) boundingBox.getMaxZ() >> 4;
 
-        Map<Long, Collection<Entity>> entityCache = this.entityCache;
-        int worldIndex = this.getWorldIndex(world);
+        CacheSnapshot snapshot = this.snapshot;
+        int worldIndex = snapshot.worldIndex(world);
+        if (worldIndex < 0)
+            return nearbyEntities; // A world the last refresh did not cover simply has nothing cached yet
+
+        Map<Long, Collection<Entity>> entityCache = snapshot.cells();
         Location location = center.clone(); // re-use location object to dump positions so we aren't constantly remaking Location objects
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
@@ -177,8 +181,12 @@ public class EntityCacheManager extends Manager {
         int minCellY = (int) minY >> 4, maxCellY = (int) maxY >> 4;
         int minCellZ = (int) minZ >> 4, maxCellZ = (int) maxZ >> 4;
 
-        Map<Long, Collection<Entity>> entityCache = this.entityCache;
-        int worldIndex = this.getWorldIndex(world);
+        CacheSnapshot snapshot = this.snapshot;
+        int worldIndex = snapshot.worldIndex(world);
+        if (worldIndex < 0)
+            return 0;
+
+        Map<Long, Collection<Entity>> entityCache = snapshot.cells();
         Location location = DIRECT_GETTERS ? null : new Location(world, 0, 0, 0);
         int count = 0;
         for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
@@ -236,9 +244,13 @@ public class EntityCacheManager extends Manager {
         int minY = world.getMinHeight() >> 4;
         int maxY = world.getMaxHeight() >> 4;
 
-        Map<Long, Collection<Entity>> entityCache = this.entityCache;
-        int worldIndex = this.getWorldIndex(world);
         Set<Entity> entities = new HashSet<>();
+        CacheSnapshot snapshot = this.snapshot;
+        int worldIndex = snapshot.worldIndex(world);
+        if (worldIndex < 0)
+            return entities;
+
+        Map<Long, Collection<Entity>> entityCache = snapshot.cells();
         for (int y = minY; y <= maxY; y++) {
             Collection<Entity> chunkEntities = entityCache.get(cellKey(worldIndex, x, y, z));
             if (chunkEntities != null)
@@ -259,13 +271,18 @@ public class EntityCacheManager extends Manager {
      * @param entity The entity to cache
      */
     public void preCacheEntity(Entity entity) {
+        CacheSnapshot snapshot = this.snapshot;
+        int worldIndex = snapshot.worldIndex(entity.getWorld());
+        if (worldIndex < 0)
+            return; // Nothing to pre-cache into; the next refresh picks the world and its entities up
+
         Location location = entity.getLocation();
-        long key = cellKey(this.getWorldIndex(entity.getWorld()), (int) location.getX() >> 4, (int) location.getY() >> 4, (int) location.getZ() >> 4);
+        long key = cellKey(worldIndex, (int) location.getX() >> 4, (int) location.getY() >> 4, (int) location.getZ() >> 4);
         // The cells the refresh publishes are plain lists that nothing mutates afterwards, so replace the
         // cell with a copy that includes the new entity rather than adding to a list a reader may be
         // iterating. A reader holding the old cell simply misses an entity that spawned mid-pass, which is
         // the same staleness it already tolerates between refreshes.
-        this.entityCache.compute(key, (k, existing) -> {
+        snapshot.cells().compute(key, (k, existing) -> {
             if (existing == null)
                 return List.of(entity);
 
@@ -281,21 +298,37 @@ public class EntityCacheManager extends Manager {
 
     private void refresh() {
         // Build the replacement cache off to the side and swap it in when it is complete; clearing and
-        // refilling the live cache made every reader in that window see a partially built cache
-        Map<Long, Collection<Entity>> entityCache = new ConcurrentHashMap<>(Math.max(16, this.entityCache.size()));
+        // refilling the live cache made every reader in that window see a partially built cache.
+        // The world indices the cell keys are packed with are rebuilt along with the cells and published
+        // with them, numbered 0..n over the worlds that are stacking right now. Handing them out
+        // monotonically instead meant a server that loads and unloads worlds forever eventually wrapped
+        // the index field and started answering one world's lookups out of another world's cells.
+        Map<Long, Collection<Entity>> cells = new ConcurrentHashMap<>(Math.max(16, this.snapshot.cells().size()));
+        Map<UUID, Integer> worldIndices = new HashMap<>();
         NMSHandler nmsHandler = NMSAdapter.getHandler();
         for (StackingThread stackingThread : this.rosePlugin.getManager(StackManager.class).getStackingThreads().values()) {
             World world = stackingThread.getTargetWorld();
-            this.addWorldEntities(entityCache, world, nmsHandler.getEntities(world));
+            int worldIndex = worldIndices.size();
+            if (worldIndex > MAX_WORLD_INDEX) {
+                // Far more worlds than the key has room for; cache the ones that fit rather than alias them
+                if (!this.worldLimitWarned) {
+                    this.worldLimitWarned = true;
+                    this.rosePlugin.getLogger().log(Level.WARNING, "More than " + (MAX_WORLD_INDEX + 1)
+                            + " worlds are being stacked at once; entities in the worlds past that are not being cached.");
+                }
+                break;
+            }
+
+            worldIndices.put(world.getUID(), worldIndex);
+            this.addWorldEntities(cells, worldIndex, world, nmsHandler.getEntities(world));
         }
-        this.entityCache = entityCache;
+        this.snapshot = new CacheSnapshot(Map.copyOf(worldIndices), cells);
     }
 
-    private void addWorldEntities(Map<Long, Collection<Entity>> entityCache, World world, List<Entity> worldEntities) {
+    private void addWorldEntities(Map<Long, Collection<Entity>> entityCache, int worldIndex, World world, List<Entity> worldEntities) {
         // The server hands entities back grouped by the chunk they live in, so consecutive entities almost
         // always land in the same cell. Remembering the last cell turns a cell key allocation plus a
         // map lookup per entity into one per cell.
-        int worldIndex = this.getWorldIndex(world);
         int lastX = 0, lastY = 0, lastZ = 0;
         Collection<Entity> lastEntities = null;
 
@@ -348,25 +381,40 @@ public class EntityCacheManager extends Manager {
     }
 
     /**
-     * @return the dense index assigned to a world, used to keep cell keys down to a single long
+     * Packs a world index and the coordinates of a 16x16x16 cell into a single long key.
+     * The world index gets the top 12 bits, the cell x and z 22 bits each (the full range of a 30 million
+     * block world) and the cell y the bottom 8 bits, which covers a build range of +/-2048 blocks, twice
+     * what any current version allows. The world index used to get 10 bits and the cell y 10; y never
+     * needed them and the world index is the field a server can plausibly run out of.
      */
-    private int getWorldIndex(World world) {
-        Integer index = this.worldIndices.get(world.getUID());
-        if (index != null)
-            return index;
-        return this.worldIndices.computeIfAbsent(world.getUID(), k -> this.nextWorldIndex.getAndIncrement());
+    private static long cellKey(int worldIndex, int x, int y, int z) {
+        return ((long) (worldIndex & 0xFFF) << 52)
+                | ((long) (x & 0x3FFFFF) << 30)
+                | ((long) (z & 0x3FFFFF) << 8)
+                | (y & 0xFFL);
     }
 
     /**
-     * Packs a world index and the coordinates of a 16x16x16 cell into a single long key.
-     * The world index gets the top 10 bits, the cell x and z 22 bits each (the full range of a 30 million
-     * block world) and the cell y the bottom 10 bits (a build range of +/-8192 blocks).
+     * One published view of the cache: the cells, and the world indices their keys were packed with. The
+     * two are rebuilt and swapped together, so a key can never be read with indices other than the ones it
+     * was written with, and a world the snapshot does not list is simply reported as having nothing cached
+     * until the next refresh includes it.
      */
-    private static long cellKey(int worldIndex, int x, int y, int z) {
-        return ((long) (worldIndex & 0x3FF) << 54)
-                | ((long) (x & 0x3FFFFF) << 32)
-                | ((long) (z & 0x3FFFFF) << 10)
-                | (y & 0x3FFL);
+    private record CacheSnapshot(Map<UUID, Integer> worldIndices, Map<Long, Collection<Entity>> cells) {
+
+        private static CacheSnapshot empty() {
+            return new CacheSnapshot(Map.of(), new ConcurrentHashMap<>());
+        }
+
+        /**
+         * @param world The world to look up
+         * @return the index this snapshot packed the world's cell keys with, or -1 if it has no cells for it
+         */
+        private int worldIndex(World world) {
+            Integer index = this.worldIndices.get(world.getUID());
+            return index != null ? index : -1;
+        }
+
     }
 
 }
