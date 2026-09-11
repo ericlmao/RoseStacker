@@ -1,7 +1,6 @@
 package dev.rosewood.rosestacker.nms.v1_17_R1;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.nms.NMSHandler;
 import dev.rosewood.rosestacker.nms.hologram.Hologram;
@@ -91,6 +90,11 @@ import sun.misc.Unsafe;
 
 @SuppressWarnings("unchecked")
 public class NMSHandlerImpl implements NMSHandler {
+
+    // Hoisted out of the send path. These are the vanilla Entity accessors for custom name and custom name
+    // visibility, and a fresh pair was allocated for every nametag packet sent to every player.
+    private static final EntityDataAccessor<Optional<Component>> DATA_CUSTOM_NAME = EntityDataSerializers.OPTIONAL_COMPONENT.createAccessor(2);
+    private static final EntityDataAccessor<Boolean> DATA_CUSTOM_NAME_VISIBLE = EntityDataSerializers.BOOLEAN.createAccessor(3);
 
     private static EntityDataAccessor<Boolean> value_Creeper_DATA_IS_IGNITED; // DataWatcherObject that determines if a creeper is ignited, normally private
 
@@ -227,10 +231,10 @@ public class NMSHandlerImpl implements NMSHandler {
     @Override
     public void updateEntityNameTagForPlayer(Player player, org.bukkit.entity.Entity entity, String customName, boolean customNameVisible) {
         try {
-            List<SynchedEntityData.DataItem<?>> dataItems = new ArrayList<>();
             Optional<Component> nameComponent = Optional.ofNullable(CraftChatMessage.fromStringOrNull(customName));
-            dataItems.add(new SynchedEntityData.DataItem<>(EntityDataSerializers.OPTIONAL_COMPONENT.createAccessor(2), nameComponent));
-            dataItems.add(new SynchedEntityData.DataItem<>(EntityDataSerializers.BOOLEAN.createAccessor(3), customNameVisible));
+            List<SynchedEntityData.DataItem<?>> dataItems = List.of(
+                    new SynchedEntityData.DataItem<>(DATA_CUSTOM_NAME, nameComponent),
+                    new SynchedEntityData.DataItem<>(DATA_CUSTOM_NAME_VISIBLE, customNameVisible));
 
             ClientboundSetEntityDataPacket entityDataPacket = new ClientboundSetEntityDataPacket(entity.getEntityId(), new SynchedEntityDataWrapper(dataItems), false);
             ((CraftPlayer) player).getHandle().connection.send(entityDataPacket);
@@ -242,7 +246,7 @@ public class NMSHandlerImpl implements NMSHandler {
     @Override
     public void updateEntityNameTagVisibilityForPlayer(Player player, org.bukkit.entity.Entity entity, boolean customNameVisible) {
         try {
-            List<SynchedEntityData.DataItem<?>> dataItems = Lists.newArrayList(new SynchedEntityData.DataItem<>(EntityDataSerializers.BOOLEAN.createAccessor(3), customNameVisible));
+            List<SynchedEntityData.DataItem<?>> dataItems = List.of(new SynchedEntityData.DataItem<>(DATA_CUSTOM_NAME_VISIBLE, customNameVisible));
             ClientboundSetEntityDataPacket entityDataPacket = new ClientboundSetEntityDataPacket(entity.getEntityId(), new SynchedEntityDataWrapper(dataItems), false);
             ((CraftPlayer) player).getHandle().connection.send(entityDataPacket);
         } catch (Exception e) {

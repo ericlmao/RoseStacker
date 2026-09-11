@@ -11,6 +11,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.EntityType;
@@ -22,6 +23,13 @@ import org.bukkit.entity.Player;
 
 public class HologramImpl extends Hologram {
 
+    // The client only needs a hologram line's UUID to be stable for its entity id, so it is derived from the
+    // id rather than drawn fresh per line per watcher. UUID.randomUUID() goes through a shared SecureRandom
+    // with a synchronized nextBytes, and create() runs every time any player starts watching any hologram.
+    private static final long HOLOGRAM_UUID_HIGH_BITS = 0x526F736553746163L; // "RoseStac"
+
+    // Hoisted out of the per-line update path, this accessor was allocated on every hologram update
+    private static final EntityDataAccessor<Component> DATA_TEXT = EntityDataSerializers.COMPONENT.createAccessor(23); // Text
     private static final List<SynchedEntityData.DataValue<?>> DATA_VALUES = List.of(
             SynchedEntityData.DataValue.create(EntityDataSerializers.BYTE.createAccessor(15), (byte) 3), // Billboard Constraint (Center)
             SynchedEntityData.DataValue.create(EntityDataSerializers.FLOAT.createAccessor(17), 1.0F)     // Visibility, always visible since these are hidden behind walls
@@ -36,7 +44,7 @@ public class HologramImpl extends Hologram {
         for (HologramLine line : this.hologramLines) {
             ClientboundAddEntityPacket packet = new ClientboundAddEntityPacket(
                     line.getEntityId(),
-                    UUID.randomUUID(),
+                    new UUID(HOLOGRAM_UUID_HIGH_BITS, line.getEntityId()),
                     line.getLocation().getX(),
                     line.getLocation().getY() + 0.75,
                     line.getLocation().getZ(),
@@ -60,14 +68,17 @@ public class HologramImpl extends Hologram {
 
             List<SynchedEntityData.DataValue<?>> dataValues = new ArrayList<>(DATA_VALUES);
             Component chatMessage = CraftChatMessage.fromStringOrNull(line.getText());
-            dataValues.add(SynchedEntityData.DataValue.create(EntityDataSerializers.COMPONENT.createAccessor(23), chatMessage));
+            dataValues.add(SynchedEntityData.DataValue.create(DATA_TEXT, chatMessage));
 
+            // Every watcher of a line gets byte-identical contents and the packet is immutable, so one
+            // instance per line is enough; this used to allocate a packet per line per player per update
+            ClientboundSetEntityDataPacket packet = new ClientboundSetEntityDataPacket(line.getEntityId(), dataValues);
             for (Player player : players) {
                 Boolean visible = this.watchers.get(player);
                 if (visible == null)
                     return;
 
-                ((CraftPlayer) player).getHandle().connection.send(new ClientboundSetEntityDataPacket(line.getEntityId(), dataValues));
+                ((CraftPlayer) player).getHandle().connection.send(packet);
             }
         }
     }
