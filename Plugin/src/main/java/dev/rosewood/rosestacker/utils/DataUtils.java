@@ -61,23 +61,20 @@ public final class DataUtils {
                 int minor = dataInput.readByte();
                 int length = dataInput.readInt();
                 byte[] nbt = new byte[length];
-                for (int i = 0; i < length; i++)
-                    nbt[i] = dataInput.readByte();
+                dataInput.readFully(nbt); // Bulk read; the per-byte loop this replaces defeated the buffering in GZIPInputStream
                 Set<StorageMigrationType> migrations = getNeededMigrations(major, minor);
                 return new StackedEntity(entity, nmsHandler.deserializeEntityDataStorage(entity, nbt, type, migrations), false);
             } else if (dataVersion == 2) {
                 StackedEntityDataStorageType type = StackedEntityDataStorageType.fromId(dataInput.readInt());
                 int length = dataInput.readInt();
                 byte[] nbt = new byte[length];
-                for (int i = 0; i < length; i++)
-                    nbt[i] = dataInput.readByte();
+                dataInput.readFully(nbt); // Bulk read; the per-byte loop this replaces defeated the buffering in GZIPInputStream
                 Set<StorageMigrationType> migrations = getNeededMigrations(0, 0);
                 return new StackedEntity(entity, nmsHandler.deserializeEntityDataStorage(entity, nbt, type, migrations), false);
             } else if (dataVersion == 1) {
                 int length = dataInput.readInt();
                 byte[] nbt = new byte[length];
-                for (int i = 0; i < length; i++)
-                    nbt[i] = dataInput.readByte();
+                dataInput.readFully(nbt); // Bulk read; the per-byte loop this replaces defeated the buffering in GZIPInputStream
                 Set<StorageMigrationType> migrations = getNeededMigrations(0, 0);
                 return new StackedEntity(entity, nmsHandler.deserializeEntityDataStorage(entity, nbt, StackedEntityDataStorageType.NBT, migrations), false);
             }
@@ -95,8 +92,10 @@ public final class DataUtils {
     }
 
     public static void writeStackedEntity(StackedEntity stackedEntity) {
-        if (stackedEntity.getStackSize() == 1)
+        if (stackedEntity.getStackSize() == 1) {
+            stackedEntity.markSaved(); // Nothing to write, but nothing to keep re-checking either
             return;
+        }
 
         PersistentDataContainer pdc = stackedEntity.getEntity().getPersistentDataContainer();
         byte[] data = null;
@@ -122,8 +121,11 @@ public final class DataUtils {
             e.printStackTrace();
         }
 
-        if (data != null)
+        if (data != null) {
             pdc.set(ENTITY_KEY, PersistentDataType.BYTE_ARRAY, data);
+            // Lets the periodic autosave skip this stack until something about it changes again
+            stackedEntity.markSaved();
+        }
     }
 
     public static void clearStackedEntityData(LivingEntity entity) {

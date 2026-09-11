@@ -1,7 +1,5 @@
 package dev.rosewood.rosestacker.spawning;
 
-import com.google.common.collect.Multimap;
-import com.google.common.collect.MultimapBuilder;
 import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.config.SettingKey;
@@ -33,9 +31,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -53,11 +50,22 @@ import org.bukkit.util.Vector;
 public class MobSpawningMethod implements SpawningMethod {
 
     private final EntityType entityType;
-    private final Random random;
+    /**
+     * Scratch space for the spawn offset cache, reused between spawn cycles. One spawning method is kept
+     * per spawner tile and a spawner only ever spawns from one thread at a time, so this never overlaps.
+     */
+    private final long[] spawnOffsetBuffer;
 
     public MobSpawningMethod(EntityType entityType) {
         this.entityType = entityType;
-        this.random = new Random();
+        this.spawnOffsetBuffer = new long[StackedSpawner.MAX_CACHED_SPAWN_OFFSETS];
+    }
+
+    /**
+     * @return the type of entity this spawning method spawns
+     */
+    public EntityType getEntityType() {
+        return this.entityType;
     }
 
     @Override
@@ -78,7 +86,7 @@ public class MobSpawningMethod implements SpawningMethod {
                 int spawnerSpawnCount = Math.max(spawnerTile.getSpawnCount(), 0);
                 spawnAmount = StackerUtils.randomInRange(stackedSpawner.getStackSize(), spawnerSpawnCount);
             } else {
-                spawnAmount = this.random.nextInt(spawnerTile.getSpawnCount()) + 1;
+                spawnAmount = ThreadLocalRandom.current().nextInt(spawnerTile.getSpawnCount()) + 1;
             }
         } else {
             spawnAmount = spawnerTile.getSpawnCount();
@@ -106,7 +114,13 @@ public class MobSpawningMethod implements SpawningMethod {
 
             boolean passedSpawnerChecks = invalidSpawnConditions.isEmpty();
             Set<Location> spawnLocations = new HashSet<>();
-            Multimap<Location, ConditionTag> invalidLocations = MultimapBuilder.hashKeys().arrayListValues().build();
+            // Failed positions used to be keyed by a Location in a multimap, which allocated a Location per
+            // attempt, hashed three doubles per lookup and built a list per failed position. The offsets are
+            // small integers, so pack them into a long and tally the unmet conditions as they come up; the
+            // failure report at the end only ever needed the counts.
+            Set<Long> invalidOffsets = new HashSet<>();
+            Map<ConditionTag, Integer> unmetConditionCounts = new HashMap<>();
+            int totalInvalidLocations = 0;
 
             int spawnRange = spawnerTile.getSpawnRange();
             int attempts = 0;
@@ -116,43 +130,93 @@ public class MobSpawningMethod implements SpawningMethod {
             if (!useNearbyEntitiesForStacking)
                 desiredLocations *= 4;
 
-            List<ConditionTag> unmetConditions = new ArrayList<>(perSpawnConditions.size());
-            while (attempts <= maxFailedSpawnAttempts) {
-                int xOffset = this.random.nextInt(spawnRange * 2 + 1) - spawnRange;
-                int yOffset = !SettingKey.SPAWNER_USE_VERTICAL_SPAWN_RANGE.get() ? this.random.nextInt(3) - 1 : this.random.nextInt(spawnRange * 2 + 1) - spawnRange;
-                int zOffset = this.random.nextInt(spawnRange * 2 + 1) - spawnRange;
+            boolean verticalSpawnRange = SettingKey.SPAWNER_USE_VERTICAL_SPAWN_RANGE.get();
+            ThreadLocalRandom random = ThreadLocalRandom.current();
 
-                Location spawnLocation = new Location(spawnerWorld, spawnerX + xOffset + 0.5, spawnerY + yOffset, spawnerZ + zOffset + 0.5);
-                if (invalidLocations.containsKey(spawnLocation)) {
+            // Mob farms are static, so the offsets that produced a valid spawn location last cycle are
+            // almost always still valid. Re-check those before sampling randomly: a saturated farm used to
+            // run the full maxFailedSpawnAttempts random search every single cycle, which is up to 800
+            // block probes with the default settings. Offsets that no longer pass are dropped and offsets
+            // found by the random search take their place.
+            int cachedOffsetCount = stackedSpawner.getCachedSpawnOffsetCount();
+            int cachedOffsetIndex = 0;
+            int keptOffsets = 0;
+
+            List<ConditionTag> unmetConditions = new ArrayList<>(perSpawnConditions.size());
+            while (true) {
+                int xOffset, yOffset, zOffset;
+                boolean fromCache = cachedOffsetIndex < cachedOffsetCount;
+                if (fromCache) {
+                    long cachedOffset = stackedSpawner.getCachedSpawnOffset(cachedOffsetIndex++);
+                    xOffset = unpackOffsetX(cachedOffset);
+                    yOffset = unpackOffsetY(cachedOffset);
+                    zOffset = unpackOffsetZ(cachedOffset);
+
+                    // The spawn range is a config value, so drop anything the current range cannot reach
+                    if (Math.abs(xOffset) > spawnRange || Math.abs(zOffset) > spawnRange
+                            || Math.abs(yOffset) > (verticalSpawnRange ? spawnRange : 1))
+                        continue;
+                } else {
+                    if (attempts > maxFailedSpawnAttempts)
+                        break;
+
+                    xOffset = random.nextInt(spawnRange * 2 + 1) - spawnRange;
+                    yOffset = !verticalSpawnRange ? random.nextInt(3) - 1 : random.nextInt(spawnRange * 2 + 1) - spawnRange;
+                    zOffset = random.nextInt(spawnRange * 2 + 1) - spawnRange;
+                }
+
+                long offsetKey = packOffset(xOffset, yOffset, zOffset);
+                if (invalidOffsets.contains(offsetKey)) {
                     // Decrease max failed spawn attempts if the location is invalid to avoid spinning forever
-                    maxFailedSpawnAttempts--;
+                    if (!fromCache)
+                        maxFailedSpawnAttempts--;
                     continue;
                 }
 
                 Block target = spawnerWorld.getBlockAt(spawnerX + xOffset, spawnerY + yOffset, spawnerZ + zOffset);
 
                 unmetConditions.clear();
-                boolean invalid = false;
-                for (ConditionTag conditionTag : perSpawnConditions) {
-                    if (!conditionTag.check(stackedSpawner, target)) {
-                        invalid = true;
+                for (ConditionTag conditionTag : perSpawnConditions)
+                    if (!conditionTag.check(stackedSpawner, target))
                         unmetConditions.add(conditionTag);
-                    }
-                }
 
-                if (invalid) {
-                    invalidLocations.putAll(spawnLocation, unmetConditions);
+                if (!unmetConditions.isEmpty()) {
+                    invalidOffsets.add(offsetKey);
+
+                    // Only the random search is on a budget; re-checking a cached offset is a few probes.
+                    // A cached offset that no longer passes is dropped from the cache here and that is all
+                    // it does: it is not counted as an attempt, so counting its unmet conditions would
+                    // report failure rates against a denominator the attempts never included. The report is
+                    // computed from the random attempts alone, exactly as it was before the cache existed.
+                    if (fromCache)
+                        continue;
+
+                    totalInvalidLocations += unmetConditions.size();
+                    for (ConditionTag conditionTag : unmetConditions)
+                        unmetConditionCounts.merge(conditionTag, 1, Integer::sum);
+
                     attempts++;
                     continue;
                 }
 
+                if (keptOffsets < StackedSpawner.MAX_CACHED_SPAWN_OFFSETS && !containsOffset(this.spawnOffsetBuffer, keptOffsets, offsetKey))
+                    this.spawnOffsetBuffer[keptOffsets++] = offsetKey;
+
                 if (!passedSpawnerChecks)
                     break;
 
-                spawnLocations.add(spawnLocation);
+                spawnLocations.add(new Location(spawnerWorld, spawnerX + xOffset + 0.5, spawnerY + yOffset, spawnerZ + zOffset + 0.5));
                 if (spawnLocations.size() >= desiredLocations)
                     break;
             }
+
+            // Anything the search stopped short of re-checking is still worth keeping for the next cycle
+            while (cachedOffsetIndex < cachedOffsetCount && keptOffsets < StackedSpawner.MAX_CACHED_SPAWN_OFFSETS) {
+                long cachedOffset = stackedSpawner.getCachedSpawnOffset(cachedOffsetIndex++);
+                if (!containsOffset(this.spawnOffsetBuffer, keptOffsets, cachedOffset))
+                    this.spawnOffsetBuffer[keptOffsets++] = cachedOffset;
+            }
+            stackedSpawner.setCachedSpawnOffsets(this.spawnOffsetBuffer, keptOffsets);
 
             int successfulSpawns;
             if (!onlyCheckConditions) {
@@ -173,16 +237,10 @@ public class MobSpawningMethod implements SpawningMethod {
 
             stackedSpawner.getLastInvalidConditions().clear();
             if (successfulSpawns == 0) {
-                Collection<ConditionTag> conditions = invalidLocations.values();
-                Map<ConditionTag, Integer> counts = new HashMap<>();
-                for (ConditionTag conditionTag : invalidLocations.values())
-                    counts.merge(conditionTag, 1, Integer::sum);
-
-                int totalInvalidLocations = invalidLocations.size();
                 ConditionTag mostFrequentCondition = null;
                 int highestCount = 0;
 
-                for (Map.Entry<ConditionTag, Integer> entry : counts.entrySet()) {
+                for (Map.Entry<ConditionTag, Integer> entry : unmetConditionCounts.entrySet()) {
                     ConditionTag conditionTag = entry.getKey();
                     int count = entry.getValue();
 
@@ -245,7 +303,7 @@ public class MobSpawningMethod implements SpawningMethod {
                 if (locations.isEmpty())
                     break;
 
-                Location location = possibleLocations.get(this.random.nextInt(possibleLocations.size()));
+                Location location = possibleLocations.get(ThreadLocalRandom.current().nextInt(possibleLocations.size()));
                 if (NMSUtil.isPaper()) {
                     var result = PreCreatureSpawnEventHelper.call(location, this.entityType, CreatureSpawnEvent.SpawnReason.SPAWNER);
                     if (result.abort())
@@ -306,17 +364,20 @@ public class MobSpawningMethod implements SpawningMethod {
         Set<StackedEntity> spawnedStacks = new HashSet<>();
         List<StackedEntity> newStacks = new ArrayList<>();
         NMSHandler nmsHandler = NMSAdapter.getHandler();
+        // Scanning every nearby stack per spawned mob is wasted work: once a stack matches it keeps
+        // matching until it fills up, so try the last one that matched before walking the list again
+        StackedEntity lastMatchedStack = null;
 
         for (int i = spawnAmount; i > 0; i--) {
-            Location location = possibleLocations.isEmpty() ? stackedSpawner.getLocation() : possibleLocations.get(this.random.nextInt(possibleLocations.size()));
+            Location location = possibleLocations.isEmpty() ? stackedSpawner.getLocation() : possibleLocations.get(ThreadLocalRandom.current().nextInt(possibleLocations.size()));
             switch (stackManager.getEntityDataStorageType(this.entityType)) {
                 case NBT -> {
                     StackedEntity newStack = new StackedEntity(this.createNewEntity(nmsHandler, location, stackedSpawner, stackManager, entityStackSettings));
-                    Optional<StackedEntity> matchingEntity = nearbyStackedEntities.stream().filter(x ->
-                            WorldGuardHook.testLocation(x.getLocation()) && entityStackSettings.testCanStackWith(x, newStack, false, true)).findAny();
-                    if (matchingEntity.isPresent()) {
-                        matchingEntity.get().increaseStackSize(newStack.getEntity(), false);
-                        modifiedStacks.add(matchingEntity.get());
+                    StackedEntity matchingEntity = this.findMatchingStack(nearbyStackedEntities, lastMatchedStack, newStack, entityStackSettings);
+                    if (matchingEntity != null) {
+                        matchingEntity.increaseStackSize(newStack.getEntity(), false);
+                        modifiedStacks.add(matchingEntity);
+                        lastMatchedStack = matchingEntity;
                     } else if (canSpawnNewEntities) {
                         if (possibleLocations.isEmpty())
                             break;
@@ -329,13 +390,13 @@ public class MobSpawningMethod implements SpawningMethod {
                 }
 
                 case SIMPLE -> {
-                    Optional<StackedEntity> matchingEntity = nearbyStackedEntities.stream().filter(x ->
-                            WorldGuardHook.testLocation(x.getLocation()) && entityStackSettings.testCanStackWith(x, x, false, true)).findAny();
-                    if (matchingEntity.isPresent()) {
+                    StackedEntity matchingEntity = this.findMatchingStack(nearbyStackedEntities, lastMatchedStack, null, entityStackSettings);
+                    if (matchingEntity != null) {
                         // Increase stack size by as much as we can
-                        int amountToIncrease = Math.min(i, entityStackSettings.getMaxStackSize() - matchingEntity.get().getStackSize());
-                        matchingEntity.get().increaseStackSize(amountToIncrease, false);
-                        modifiedStacks.add(matchingEntity.get());
+                        int amountToIncrease = Math.min(i, entityStackSettings.getMaxStackSize() - matchingEntity.getStackSize());
+                        matchingEntity.increaseStackSize(amountToIncrease, false);
+                        modifiedStacks.add(matchingEntity);
+                        lastMatchedStack = matchingEntity;
                         i -= amountToIncrease;
                         successfulSpawns += amountToIncrease;
                     } else if (canSpawnNewEntities) {
@@ -392,6 +453,60 @@ public class MobSpawningMethod implements SpawningMethod {
         });
 
         return new SpawnResult(successfulSpawns, modifiedStacks, spawnedStacks);
+    }
+
+    /**
+     * Finds a nearby stack that a newly spawned mob can be merged into, checking the stack that matched
+     * last before falling back to scanning the whole list.
+     *
+     * @param nearbyStackedEntities The nearby stacks to search
+     * @param lastMatchedStack The stack that matched for the previous mob, or null if there was none
+     * @param newStack The stack being merged in, or null to test each candidate against itself
+     * @param entityStackSettings The stack settings of the entity being spawned
+     * @return the stack to merge into, or null if none of them match
+     */
+    private StackedEntity findMatchingStack(List<StackedEntity> nearbyStackedEntities, StackedEntity lastMatchedStack, StackedEntity newStack, EntityStackSettings entityStackSettings) {
+        if (lastMatchedStack != null && this.canStackInto(lastMatchedStack, newStack, entityStackSettings))
+            return lastMatchedStack;
+
+        for (StackedEntity stackedEntity : nearbyStackedEntities)
+            if (stackedEntity != lastMatchedStack && this.canStackInto(stackedEntity, newStack, entityStackSettings))
+                return stackedEntity;
+
+        return null;
+    }
+
+    private boolean canStackInto(StackedEntity stackedEntity, StackedEntity newStack, EntityStackSettings entityStackSettings) {
+        return WorldGuardHook.testLocation(stackedEntity.getLocation())
+                && entityStackSettings.testCanStackWith(stackedEntity, newStack == null ? stackedEntity : newStack, false, true);
+    }
+
+    /**
+     * Packs a block offset relative to the spawner into a single long, 21 bits per axis. Spawn offsets are
+     * bounded by the spawn range, so a primitive key is enough to identify a candidate spawn position and
+     * it keeps both the offset cache and the invalid-position bookkeeping free of Location allocation.
+     */
+    private static long packOffset(int x, int y, int z) {
+        return ((long) (x & 0x1FFFFF) << 42) | ((long) (z & 0x1FFFFF) << 21) | (y & 0x1FFFFFL);
+    }
+
+    private static int unpackOffsetX(long packedOffset) {
+        return (int) (packedOffset << 1 >> 43);
+    }
+
+    private static int unpackOffsetY(long packedOffset) {
+        return (int) (packedOffset << 43 >> 43);
+    }
+
+    private static int unpackOffsetZ(long packedOffset) {
+        return (int) (packedOffset << 22 >> 43);
+    }
+
+    private static boolean containsOffset(long[] offsets, int count, long offset) {
+        for (int i = 0; i < count; i++)
+            if (offsets[i] == offset)
+                return true;
+        return false;
     }
 
     private LivingEntity createNewEntity(NMSHandler nmsHandler, Location location, StackedSpawner stackedSpawner, StackManager stackManager, EntityStackSettings entityStackSettings) {

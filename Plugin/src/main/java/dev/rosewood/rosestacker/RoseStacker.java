@@ -129,6 +129,7 @@ public class RoseStacker extends RosePlugin {
     public void reload() {
         super.reload();
         StackerUtils.clearCache();
+        WorldGuardHook.clearCache();
     }
 
     @Override

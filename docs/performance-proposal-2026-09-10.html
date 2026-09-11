@@ -1,0 +1,2437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoseStacker MSPT Reduction Proposal - 2026-09-10</title>
+<style>
+  :root {
+    --ink: #16191d;
+    --muted: #5b636e;
+    --rule: #dfe3e8;
+    --soft: #f5f7f9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.62;
+    color: var(--ink);
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 30px 90px;
+    background: #fff;
+  }
+  h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 {
+    font-size: 20px; margin: 44px 0 14px; padding-bottom: 6px;
+    border-bottom: 2px solid var(--ink); letter-spacing: -0.01em;
+  }
+  h3 { font-size: 16px; margin: 26px 0 10px; }
+  p { margin: 10px 0; }
+  a { color: #14538a; }
+  .titleblock {
+    border: 1px solid var(--rule); border-top: 4px solid var(--ink);
+    padding: 20px 24px; border-radius: 3px; margin-bottom: 26px;
+  }
+  .titleblock .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  .meta { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .meta table { margin: 0; }
+  .meta td { border: 0; padding: 2px 18px 2px 0; font-size: 13px; }
+  .meta td:first-child { color: var(--ink); font-weight: 600; white-space: nowrap; }
+
+  table { width: 100%; border-collapse: collapse; margin: 14px 0 18px; font-size: 13.5px; }
+  th, td { border: 1px solid var(--rule); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); font-weight: 600; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: #fbfcfd; }
+
+  code, pre, .path {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  code, .path { background: #eef1f4; padding: 1px 4px; border-radius: 3px; font-size: 12.5px; }
+  pre {
+    background: #1e2229; color: #e8eaed; padding: 13px 15px; border-radius: 4px;
+    overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 12px 0;
+  }
+  pre .c { color: #8b98a5; }
+  pre .k { color: #c792ea; }
+  pre .s { color: #a3d39c; }
+
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 3px; margin-right: 5px;
+    border: 1px solid transparent; white-space: nowrap; vertical-align: 2px;
+  }
+  .p0 { background: #fdeceb; color: #a11c15; border-color: #f3c4c1; }
+  .p1 { background: #fff3e0; color: #8a5000; border-color: #f0d5a8; }
+  .p2 { background: #eef4fd; color: #1a4f8a; border-color: #c6d9f0; }
+  .p3 { background: #f0f1f3; color: #4f5763; border-color: #d8dbe0; }
+  .neutral { background: #fff; color: #39414d; border-color: #ccd2da; }
+  .risk-low { background: #edf7ed; color: #1f6127; border-color: #c8e4c9; }
+  .risk-med { background: #fff8e1; color: #7a5600; border-color: #ecd9a0; }
+  .risk-high { background: #fdeceb; color: #a11c15; border-color: #f3c4c1; }
+
+  .finding {
+    border: 1px solid var(--rule); border-left: 5px solid #ccd2da;
+    padding: 16px 20px 8px; margin: 20px 0; border-radius: 3px;
+  }
+  .finding.b-p0 { border-left-color: #c0392b; }
+  .finding.b-p1 { border-left-color: #d68910; }
+  .finding.b-p2 { border-left-color: #2d6ca8; }
+  .finding.b-p3 { border-left-color: #9aa2ad; }
+  .finding h3 { margin-top: 0; }
+  .finding .badges { margin: 0 0 12px; }
+
+  .row { display: grid; grid-template-columns: 128px 1fr; gap: 4px 14px; margin: 9px 0; }
+  .row > .lbl {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--muted); padding-top: 5px;
+  }
+  .row > div p:first-child { margin-top: 0; }
+  .row > div p:last-child { margin-bottom: 0; }
+  .row ul, .row ol { margin: 6px 0; padding-left: 22px; }
+  .row li { margin: 4px 0; }
+
+  .note {
+    background: var(--soft); border: 1px solid var(--rule); border-left: 4px solid #9aa2ad;
+    padding: 12px 16px; border-radius: 3px; margin: 16px 0; font-size: 14px;
+  }
+  .note strong:first-child { display: block; margin-bottom: 4px; }
+  .tldr { border-left-color: #c0392b; }
+  .toc { columns: 2; column-gap: 34px; font-size: 13.5px; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 2px 0; break-inside: avoid; }
+  footer { margin-top: 60px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 12.5px; color: var(--muted); }
+
+  @media print {
+    body { max-width: none; padding: 0; font-size: 10.5pt; }
+    h2 { break-after: avoid; }
+    .finding, table, pre, .note { break-inside: avoid; }
+    pre { white-space: pre-wrap; word-wrap: break-word; }
+    .toc { columns: 2; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="titleblock">
+  <h1>RoseStacker: MSPT Reduction Proposal</h1>
+  <p class="sub">Cutting main-thread and world-tick-thread cost on a 130+ player UniverseSpigot 1.21.11 server</p>
+  <div class="meta">
+    <table>
+      <tr><td>Date</td><td>2026-09-10</td></tr>
+      <tr><td>Baseline</td><td>master @ <code>b52f7668</code></td></tr>
+      <tr><td>Profile</td><td>spark, 2026-09-05, 135 players, ~16 TPS</td></tr>
+      <tr><td>Findings</td><td>21 across 6 groups (A-F)</td></tr>
+      <tr><td>Status</td><td>Proposal - nothing here is implemented</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="note tldr">
+  <strong>TL;DR</strong>
+  RoseStacker's main-thread cost is dominated by <em>scheduled task volume</em>, not by the work inside those
+  tasks. RoseGarden's Bukkit scheduler wrapper turns every <code>ThreadUtils.runOnEntity()</code> /
+  <code>runOnLocation()</code> call from an async pass into a plain main-thread Bukkit task, so each periodic pass
+  submits one task per entity - roughly 12,000 tasks every 100 ticks for the stacking pass alone, the vast
+  majority of which exit immediately on their first branch. The single highest-leverage change is to move the
+  cheap culls to the async side and drain the survivors from <strong>one budgeted main-thread task per tick</strong>
+  (finding F1). On the world tick threads the cost is concentrated in the spawner spawn path, where every mob
+  that spawns is fully serialized to NBT even when its storage is discarded microseconds later (B1), and where
+  each unstack cycle materializes a throwaway NMS entity per stack (A2). Phase 1 of the roadmap addresses all
+  three and is low risk.
+</div>
+
+<h2 id="context">1. Context</h2>
+
+<p>
+  Production is UniverseSpigot 1.21.11, a Paper fork with asynchronous world ticking: each world ticks on its
+  own thread rather than on the primary thread. The server runs 130+ concurrent players with roughly 12,000
+  living entities, dominated by spawner farms and hopper-fed item farms.
+</p>
+
+<p>
+  A spark profile taken on 2026-09-05 (135 players, ~16 TPS) attributes the following to RoseStacker:
+</p>
+
+<table>
+  <thead>
+    <tr><th>Thread</th><th>Path</th><th class="num">ms/tick</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Main</td><td>Bukkit sync scheduler (all RoseStacker tasks)</td><td class="num">0.90</td></tr>
+    <tr><td>Overworld tick thread</td><td>Stacked spawner ticking</td><td class="num">0.86</td></tr>
+    <tr><td>End tick thread</td><td>Stacked spawner ticking</td><td class="num">0.80</td></tr>
+    <tr><td>Main</td><td>Line-of-sight walks - nametags</td><td class="num">0.51</td></tr>
+    <tr><td>Main</td><td>Line-of-sight walks - spawn conditions</td><td class="num">0.19</td></tr>
+    <tr><td>Main</td><td>Entity cache refresh</td><td class="num">0.17</td></tr>
+    <tr><td>Main</td><td>Line-of-sight walks - holograms</td><td class="num">0.16</td></tr>
+    <tr><td>Main</td><td>Unstack checks</td><td class="num">0.14</td></tr>
+  </tbody>
+</table>
+
+<h3>1.1 The architectural fact that shapes everything below</h3>
+
+<p>
+  RoseGarden 1.5.7's <code>BukkitSchedulerWrapper</code> - read from the published sources jar -
+  implements both <code>isEntityThread(Entity)</code> and <code>isLocationThread(Location)</code> as
+  <code>Bukkit.isPrimaryThread()</code>, and delegates both <code>runTaskAtEntity(...)</code> and
+  <code>runTaskAtLocation(...)</code> to <code>runTask(runnable)</code>, i.e. a plain Bukkit main-thread task.
+  The plugin's own wrapper is a thin pass-through (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/ThreadUtils.java:60-73</span>):
+</p>
+
+<pre><span class="c">// ThreadUtils.java:68-73 - on a non-Folia server this always takes the second branch
+// when called from one of the async stacking passes.</span>
+<span class="k">public static void</span> runOnEntity(Entity entity, Runnable runnable) {
+    <span class="k">if</span> (SCHEDULER.isEntityThread(entity)) {   <span class="c">// == Bukkit.isPrimaryThread()</span>
+        runnable.run();
+    } <span class="k">else if</span> (checkEnabled()) {
+        SCHEDULER.runTaskAtEntity(entity, runnable); <span class="c">// == Bukkit scheduler runTask()</span>
+    }
+}</pre>
+
+<p>
+  Consequences on this server:
+</p>
+
+<ul>
+  <li>Every <code>runOnEntity</code>/<code>runOnLocation</code> from an async pass allocates a <code>Runnable</code>
+      plus a <code>BukkitTask</code> and inserts it into the scheduler's pending-task structure.</li>
+  <li>The world tick threads are <em>not</em> the primary thread either, so calls made from spawner ticking also
+      funnel onto the main thread rather than staying on the world thread.</li>
+  <li>The main-thread heartbeat then drains the whole burst in a single tick. A pass that submits 12,000 tasks
+      produces one very expensive tick every cycle, which is exactly what the 0.90 ms/tick average is smearing out.</li>
+</ul>
+
+<p>
+  Therefore: <strong>reducing the number of scheduled tasks per cycle is a bigger lever than optimizing the body
+  of any individual task.</strong> Findings A1-A4 and F1 are built around that.
+</p>
+
+<h3>1.2 Things that are not the problem</h3>
+
+<ul>
+  <li><strong>Config lookups.</strong> <code>BackedRoseSetting</code> caches the parsed value per reload, so
+      <code>SettingKey.X.get()</code> is a field read. It appears everywhere in these hot paths and is not worth
+      touching.</li>
+  <li><strong>Storage mode choice.</strong> Both modes matter: NBT (default) keeps a per-member tag; SIMPLE keeps
+      only a count and clones the head entity on read. Several findings below only apply to one of the two, and
+      each says which.</li>
+</ul>
+
+<h3>1.3 Previously addressed (merged - do not re-propose)</h3>
+
+<table>
+  <thead><tr><th>PR</th><th>Commit</th><th>Contents</th></tr></thead>
+  <tbody>
+    <tr><td>#6</td><td><code>7d78b8bc</code></td><td>Hopper pickup early-outs; nametag loop inversion; hologram dirty tracking.</td></tr>
+    <tr><td>#8</td><td><code>2c8524e9</code></td><td>SIMPLE-storage <code>shouldStayStacked</code> self-compare; <code>allIntersectingBlocksMatch</code>; spawner hologram text cache keyed only on the placeholders actually used.</td></tr>
+    <tr><td>#9</td><td><code>f0693d7b</code></td><td><code>StackedSpawnerTile#getSpawnerType</code> cached by identity of <code>spawnPotentials</code>/<code>nextSpawnData</code>; hopper free-space scan stops early.</td></tr>
+    <tr><td>#11</td><td><code>e0bbf97b</code></td><td>Recursive chunk load fix.</td></tr>
+    <tr><td>#12</td><td><code>53068d6c</code></td><td>Per-player nametag last-sent state plus Paper track/untrack events; hologram 16-block cell index and per-player watched set; <code>BoundedCache</code> for chat components; primitive line-of-sight walker.</td></tr>
+  </tbody>
+</table>
+
+<h3>1.4 In flight (branch <code>perf/spark-2026-09-05</code>, commit <code>d0db5d84</code>)</h3>
+
+<p>
+  This proposal assumes the following lands first and does not duplicate it:
+</p>
+
+<ul>
+  <li>Removal of the 3-second <code>ChunkSnapshot</code> cache; <code>hasLineOfSight</code>,
+      <code>forEachIntersectingBlock</code> and <code>getLazyBlockMaterial</code> read blocks straight from the
+      loaded chunk.</li>
+  <li>Per-player nametag line-of-sight memo: skip the ray while neither endpoint has moved more than 0.25 block,
+      up to 3 cycles.</li>
+  <li>Condition tags read blocks by coordinate rather than allocating a <code>Location</code>/<code>Block</code>.</li>
+  <li><code>SpawnerStackSettings</code> pre-partitions per-spawn conditions from spawner-level conditions.</li>
+  <li><code>MobSpawningMethod</code>'s attempt loop reads the spawner coordinates once.</li>
+  <li><code>shouldStayStacked</code> wraps the deserialized copy in a SIMPLE storage instead of an NBT storage,
+      removing one NBT save per check.</li>
+  <li><code>EntityCacheManager</code> memoizes the cell across consecutive entities and uses a
+      <code>ConcurrentLinkedQueue</code>; <code>NMSHandlerImpl#getEntities</code> presizes its list.</li>
+</ul>
+
+<h2 id="summary">2. Summary and priority ranking</h2>
+
+<div class="toc">
+  <ul>
+    <li><a href="#a1">A1 - Per-entity tasks in the stacking pass</a></li>
+    <li><a href="#a2">A2 - Per-stack tasks and entity builds in the unstack pass</a></li>
+    <li><a href="#a3">A3 - Nametag and hologram passes still hit the main thread</a></li>
+    <li><a href="#a4">A4 - Orphan rescan runs on the main thread</a></li>
+    <li><a href="#b1">B1 - Eager NBT serialization on every stack creation</a></li>
+    <li><a href="#b2">B2 - Spawner attempt loop repeats work per attempt</a></li>
+    <li><a href="#b3">B3 - <code>isNearPlayer</code> scans every player per spawner</a></li>
+    <li><a href="#b4">B4 - <code>MaxNearbyEntityConditionTag</code> double scan</a></li>
+    <li><a href="#c1">C1 - SecureRandom UUIDs in hot paths</a></li>
+    <li><a href="#c2">C2 - Double tag copy and byte-at-a-time reads</a></li>
+    <li><a href="#c3">C3 - Shared-damage path materializes the whole stack</a></li>
+    <li><a href="#c4">C4 - Per-call accessor and packet allocation</a></li>
+    <li><a href="#c5">C5 - <code>LinkedBlockingQueue</code> storage backing</a></li>
+    <li><a href="#d1">D1 - Display-name string cache</a></li>
+    <li><a href="#d2">D2 - PDC flag lookups allocate a key per call</a></li>
+    <li><a href="#d3">D3 - WorldGuard region query cache</a></li>
+    <li><a href="#d4">D4 - Hologram location and block-state re-snapshot</a></li>
+    <li><a href="#d5">D5 - Item stacking pass</a></li>
+    <li><a href="#e1">E1 - Autosave and unload serialize everything</a></li>
+    <li><a href="#e2">E2 - Entity cache refresh clears in place</a></li>
+    <li><a href="#f1">F1 - Batched, budgeted main-thread executor</a></li>
+  </ul>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:52px">ID</th>
+      <th>Finding</th>
+      <th style="width:74px">Priority</th>
+      <th style="width:62px">Effort</th>
+      <th style="width:66px">Risk</th>
+      <th style="width:110px">Thread</th>
+      <th style="width:130px">Primary win</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="#f1">F1</a></td><td>Batched, budgeted main-thread executor (enabler for A1/A2/A3/A4/E1)</td>
+      <td><span class="badge p0">P0</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Main</td><td>Caps task volume</td>
+    </tr>
+    <tr>
+      <td><a href="#a1">A1</a></td><td>Stacking pass schedules one main-thread task per stacked entity</td>
+      <td><span class="badge p0">P0</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Main</td><td>~12k tasks / 100 ticks</td>
+    </tr>
+    <tr>
+      <td><a href="#a2">A2</a></td><td>Unstack pass schedules per stack and builds a throwaway NMS entity per stack</td>
+      <td><span class="badge p0">P0</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-med">Low-Med</span></td><td>Main</td><td>0.14 ms/tick + tasks</td>
+    </tr>
+    <tr>
+      <td><a href="#b1">B1</a></td><td>Every stack creation eagerly serializes the entity to NBT</td>
+      <td><span class="badge p0">P0</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Tick thread</td><td>Spawner tick cost</td>
+    </tr>
+    <tr>
+      <td><a href="#a3">A3</a></td><td>Nametag and hologram passes still schedule per-stack and per-player tasks</td>
+      <td><span class="badge p1">P1</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-med">Med</span></td><td>Both</td><td>Largest sync consumer</td>
+    </tr>
+    <tr>
+      <td><a href="#b2">B2</a></td><td>Spawner attempt loop repeats allocation and parsing per attempt / per spawn</td>
+      <td><span class="badge p1">P1</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Tick thread</td><td>0.86 / 0.80 ms/tick</td>
+    </tr>
+    <tr>
+      <td><a href="#c1">C1</a></td><td>SecureRandom UUIDs on entity materialization and hologram spawn</td>
+      <td><span class="badge p1">P1</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Both</td><td>Lock contention</td>
+    </tr>
+    <tr>
+      <td><a href="#d1">D1</a></td><td>Display name rebuilt per update; shared <code>NumberFormat</code> is not thread-safe</td>
+      <td><span class="badge p1">P1</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Both</td><td>Regex passes + a real bug</td>
+    </tr>
+    <tr>
+      <td><a href="#d2">D2</a></td><td>PDC flag lookups allocate a <code>NamespacedKey</code> per call</td>
+      <td><span class="badge p1">P1</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Both</td><td>Allocation in every path</td>
+    </tr>
+    <tr>
+      <td><a href="#a4">A4</a></td><td>Orphan rescan runs on the main thread over every entity</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Main</td><td>Periodic spike</td>
+    </tr>
+    <tr>
+      <td><a href="#b3">B3</a></td><td><code>isNearPlayer</code> iterates every player, per spawner, every 10 ticks</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Tick thread</td><td>O(spawners x players)</td>
+    </tr>
+    <tr>
+      <td><a href="#b4">B4</a></td><td><code>MaxNearbyEntityConditionTag</code> scans, then the spawn path scans again</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Tick thread</td><td>Duplicate scan</td>
+    </tr>
+    <tr>
+      <td><a href="#c2">C2</a></td><td>Double <code>CompoundTag</code> copy; byte-at-a-time NBT read</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Both</td><td>Chunk load / kill</td>
+    </tr>
+    <tr>
+      <td><a href="#c3">C3</a></td><td>Shared-damage path deserializes and re-serializes the whole stack</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-med">Med</span></td><td>Main</td><td>Off by default</td>
+    </tr>
+    <tr>
+      <td><a href="#d3">D3</a></td><td>WorldGuard region query per listener call and per stack candidate</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-med">Med</span></td><td>Both</td><td>Only with WorldGuard</td>
+    </tr>
+    <tr>
+      <td><a href="#d4">D4</a></td><td>Hologram location allocated per check; block state re-snapshot per size change</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Both</td><td>Per-spawner churn</td>
+    </tr>
+    <tr>
+      <td><a href="#d5">D5</a></td><td>Item stacking pass re-checks flags and allocates per neighbour</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">M</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Async</td><td>Allocation pressure</td>
+    </tr>
+    <tr>
+      <td><a href="#e1">E1</a></td><td>Autosave and chunk unload serialize every stack every time</td>
+      <td><span class="badge p2">P2</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Main</td><td>15-minute spike</td>
+    </tr>
+    <tr>
+      <td><a href="#e2">E2</a></td><td>Entity cache refresh clears and rebuilds in place</td>
+      <td><span class="badge p3">P3</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Main</td><td>0.17 ms/tick</td>
+    </tr>
+    <tr>
+      <td><a href="#c4">C4</a></td><td>Per-call <code>EntityDataAccessor</code> and per-player packet allocation</td>
+      <td><span class="badge p3">P3</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Main</td><td>Minor, very frequent</td>
+    </tr>
+    <tr>
+      <td><a href="#c5">C5</a></td><td>Storage backing queue is a <code>LinkedBlockingQueue</code></td>
+      <td><span class="badge p3">P3</span></td><td><span class="badge neutral">S</span></td>
+      <td><span class="badge risk-low">Low</span></td><td>Both</td><td>Lock per operation</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Corrections made while verifying against <code>b52f7668</code></strong>
+  Four items in the source analysis did not survive verification unchanged and have been corrected in place below;
+  see <a href="#appendix-b">Appendix B</a> for the full list. The most important one: on the 1.21+ NMS modules,
+  <code>fillAttributeUuids</code> almost certainly never executes its body, so it is not a
+  <code>SecureRandom</code> hot spot (C1 has been rewritten accordingly).
+</div>
+
+<h2 id="group-a">3. Group A - Scheduled task volume (main thread)</h2>
+
+<div class="finding b-p0" id="a1">
+  <h3>A1. The periodic entity stacking pass schedules one main-thread task per stacked entity</h3>
+  <p class="badges">
+    <span class="badge p0">P0</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>stackEntities()</code> runs asynchronously every <code>STACK_FREQUENCY</code> ticks (default 100,
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/config/SettingKey.java:24</span>) and
+      iterates every <code>StackedEntity</code> in the world
+      (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackingThread.java:160-186</span>).
+      It performs one cull inline - <code>isRemoved</code> - and then, if
+      <code>ENTITY_REQUIRE_LINE_OF_SIGHT</code> (default <code>true</code>) or
+      <code>ENTITY_DONT_STACK_IF_IN_WATER</code> is enabled, schedules a main-thread task per entity:
+    </p>
+<pre><span class="c">// StackingThread.java:170-183</span>
+<span class="k">for</span> (StackedEntity stackedEntity : this.stackedEntities.values()) {
+    LivingEntity livingEntity = stackedEntity.getEntity();
+    <span class="k">if</span> (this.isRemoved(livingEntity)) { this.removeEntityStack(stackedEntity); <span class="k">continue</span>; }
+
+    <span class="k">if</span> (SettingKey.ENTITY_REQUIRE_LINE_OF_SIGHT.get() || SettingKey.ENTITY_DONT_STACK_IF_IN_WATER.get()) {
+        ThreadUtils.runOnEntity(livingEntity, () -> this.tryStackEntity(stackedEntity)); <span class="c">// one main task each</span>
+    } <span class="k">else</span> {
+        this.tryStackEntity(stackedEntity);
+    }
+}</pre>
+    <p>
+      On the main thread, <code>tryStackEntity</code>
+      (<span class="path">StackingThread.java:1222-1240</span>) immediately returns for the overwhelming majority:
+      <code>stackSettings == null</code>, <code>checkNPC()</code>, <code>isRemoved()</code>,
+      <code>!hasMoved()</code>, and the WorldGuard test all precede any real work, and
+      <code>hasMoved()</code> is false for AI-disabled farm mobs, which never move.
+    </p>
+    <p>
+      <code>isRemoved</code> (<span class="path">StackingThread.java:1407-1409</span>) is itself not free:
+      <code>entity.hasMetadata("RS_new")</code> builds a <code>UUID.toString() + ":" + key</code> string and does a
+      synchronized map lookup in CraftBukkit's metadata store, and the Guava
+      <code>REMOVED_ENTITIES.getIfPresent</code> call reads <code>System.nanoTime()</code> on every access.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      With ~12,000 living entities, every 5 seconds the main thread receives a burst of ~12,000 task submissions
+      that do nothing. Each costs a <code>Runnable</code> allocation, a <code>BukkitTask</code> allocation, a
+      scheduler insertion under lock on the submitting side, and a drain plus dispatch on the main thread. The
+      main thread pays this all in one tick, so it shows up as a periodic spike rather than as steady load - and
+      spikes are what break the 50 ms budget.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li><strong>Move the culls async.</strong> Evaluate <code>stackSettings == null</code>,
+          <code>checkNPC()</code>, <code>isRemoved()</code>, <code>hasMoved()</code> and the WorldGuard test in the
+          async pass, before scheduling anything. Only entities that actually moved get scheduled.</li>
+      <li><strong>Batch the survivors.</strong> Collect them into one list and submit a single main-thread task per
+          cycle that loops them, instead of one task per entity. On Folia, one task per region.</li>
+      <li><strong>Budget the batch</strong> via the executor in <a href="#f1">F1</a>: drain up to N ms of work per
+          tick and carry the remainder to the next tick, so the burst is spread instead of landing in one tick.</li>
+      <li><strong>Drop the metadata flag.</strong> Replace the <code>"RS_new"</code> Bukkit metadata with a plain
+          boolean field on <code>StackedEntity</code>/<code>StackedItem</code> (or a
+          <code>Set&lt;UUID&gt;</code> owned by the stacking thread), and replace the Guava
+          <code>REMOVED_ENTITIES</code> cache with a <code>ConcurrentHashMap&lt;UUID, Long&gt;</code> pruned in the
+          existing cleanup task.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Before / after</div><div>
+    <table>
+      <thead><tr><th>Per 100-tick cycle, 12k entities</th><th class="num">Today</th><th class="num">Proposed</th></tr></thead>
+      <tbody>
+        <tr><td>Main-thread task submissions</td><td class="num">~12,000</td><td class="num">1</td></tr>
+        <tr><td><code>hasMetadata</code> string builds (main)</td><td class="num">~24,000</td><td class="num">0</td></tr>
+        <tr><td><code>tryStackEntity</code> bodies run on main</td><td class="num">~12,000</td><td class="num">= entities that moved</td></tr>
+        <tr><td>Worst-case single-tick cost</td><td class="num">whole burst</td><td class="num">budget (e.g. 2 ms)</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      The burst tick disappears. Whatever remains is proportional to the number of entities that actually moved,
+      which on a farm-heavy server is a small fraction of the total.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Behaviour is unchanged: the <code>hasMoved()</code> cull already gates all downstream work, so moving it
+      earlier only changes <em>where</em> it is evaluated. Reading entity position off-thread is already done in
+      this file - <code>processEntityNametags</code> reads <code>entity.getLocation()</code> off-thread at
+      <span class="path">StackingThread.java:370</span> - and the exact check is repeated on the entity's thread.
+      The metadata replacement is the only piece that touches semantics; keep the metadata write for one release
+      if any downstream plugin is known to read it.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      In spark's main-thread tree, the node
+      <code>CraftScheduler#mainThreadHeartbeat -&gt; StackingThread.lambda$stackEntities$... -&gt; tryStackEntity</code>
+      should disappear. Add a debug counter logging tasks submitted per cycle and entities that passed the
+      <code>hasMoved</code> cull; the ratio is the win.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p0" id="a2">
+  <h3>A2. The unstack pass schedules one main-thread task per stack and materializes a full NMS entity per stack per cycle</h3>
+  <p class="badges">
+    <span class="badge p0">P0</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-med">Risk Low-Med</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      Every <code>UNSTACK_FREQUENCY</code> ticks (default 50), <code>unstackEntities()</code>
+      (<span class="path">StackingThread.java:188-204</span>) calls <code>tryUnstackEntity</code>
+      (<span class="path">StackingThread.java:205-231</span>) for every stack, and that schedules a main-thread
+      task for each stack with size &gt; 1. On the main thread, for NBT storage,
+      <code>shouldStayStacked</code> (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedEntity.java:595-617</span>)
+      builds a complete NMS entity:
+    </p>
+<pre><span class="c">// StackedEntity.java:613-616 - the NBT branch, run per stack per 50 ticks</span>
+LivingEntity entity = this.stackedEntityDataStorage.peek()
+        .createEntity(this.entity.getLocation(), <span class="k">false</span>, this.entity.getType());
+StackedEntity stackedEntity = <span class="k">new</span> StackedEntity(entity,
+        nmsHandler.createEntityDataStorage(entity, ...), <span class="k">false</span>);
+<span class="k">return</span> this.stackSettings.testCanStackWith(this, stackedEntity, <span class="k">true</span>);</pre>
+    <p>The call chain behind that <code>peek()</code>:</p>
+    <ul>
+      <li><code>peek()</code> (<span class="path">NMS/v26_2_R1/src/main/java/dev/rosewood/rosestacker/nms/v26_2_R1/storage/NBTStackedEntityDataStorage.java:98-101</span>)
+          calls <code>rebuild()</code> (<span class="path">…/NBTStackedEntityDataStorage.java:247-252</span>), which
+          allocates a <code>CompoundTag</code> and performs two merges, plus <code>fillAttributeUuids</code>
+          (<span class="path">…:279-292</span>).</li>
+      <li><code>NBTEntityDataEntry.createEntity</code>
+          (<span class="path">NMS/v26_2_R1/…/storage/NBTEntityDataEntry.java:44-100</span>) copies the tag
+          <em>again</em> at line 48, stores a fresh <code>UUID.randomUUID()</code> at line 59, calls
+          <code>NMSHandlerImpl#createCreature</code> (<span class="path">NMS/v26_2_R1/…/NMSHandlerImpl.java:206-243</span>)
+          which runs <code>Mob#finalizeSpawn</code> - random equipment rolls, attribute rolls, group data - and
+          then runs <code>entity.load(valueInput)</code> over the tag.</li>
+    </ul>
+    <p>
+      This happens for every NBT stack with size &gt; 1, every 2.5 seconds, even when the stack and its head entity
+      have been completely idle. The in-flight branch removes one extra NBT save from the wrapper
+      <code>StackedEntity</code>, but the entity construction itself remains.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      This is the 0.14 ms/tick "unstack checks" line, and it is also a second per-cycle task burst on top of A1.
+      The work is pure waste for idle spawner farms: the answer is the same every cycle.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>Four layers, each useful on its own:</p>
+    <ol>
+      <li><strong>(a) Cull before scheduling, async.</strong> Skip stacks whose head entity is not ticking
+          (Paper's <code>Entity#isTicking()</code>, confirmed present on both the 1.21.11 and 26.2 Paper API jars
+          - outside entity activation range, no player nearby): its state cannot have changed. Skip stacks unchanged since the last check, using <code>lastModifiedTicks</code>
+          (already tracked) as the dirty signal, with a conservative fallback that re-checks an idle stack every
+          Nth cycle (e.g. every 4th) so nothing can get permanently stuck.</li>
+      <li><strong>(b) Batch.</strong> One main-thread task per cycle running all due checks, budgeted by
+          <a href="#f1">F1</a>.</li>
+      <li><strong>(c) Fast path in <code>NBTStackedEntityDataStorage</code>.</strong> The constructor removes every
+          <code>UNSAFE_NBT_KEYS</code> entry from <code>base</code>
+          (<span class="path">…/NBTStackedEntityDataStorage.java:36-44</span>), and <code>addClones()</code> stores
+          straight copies of <code>base</code>, while <code>removeDuplicates()</code> strips keys identical to
+          <code>base</code>. So an entry whose remaining keys are all in <code>UNSAFE_NBT_KEYS</code> (Health,
+          attributes, equipment, brain, ...) differs from the head only in fields the stack conditions do not
+          consult. Add a <code>boolean headIsRepresentative()</code> that tests exactly that, and let
+          <code>shouldStayStacked</code> take the SIMPLE self-compare branch when it is true. PR #8 already made
+          the argument that the self-compare is equivalent; this extends it to the NBT stacks that are effectively
+          clones - which, for spawner-fed farms, is nearly all of them.</li>
+      <li><strong>(d) When an entity really must be built,</strong> make the build cheaper: avoid the second tag
+          copy (<code>rebuild()</code> already returns a fresh tag - add a constructor flag so
+          <code>createEntity</code> does not copy it again), and replace
+          <code>UUID.randomUUID()</code> with <code>Mth.createInsecureUUID(RandomSource)</code> or simply remove
+          the <code>"UUID"</code> key so the entity keeps the UUID it was constructed with. Optionally skip
+          <code>Mob#finalizeSpawn</code> when the tag already carries equipment and attributes; <strong>this last
+          sub-item is a behaviour change</strong> - clones from SIMPLE storage and <code>addClones()</code> rely on
+          <code>finalizeSpawn</code> to re-roll equipment - and should be decided explicitly rather than folded in.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Before / after</div><div>
+    <table>
+      <thead><tr><th>Per 50-tick cycle, 3,000 stacks of size &gt; 1</th><th class="num">Today</th><th class="num">After (a)(b)(c)</th></tr></thead>
+      <tbody>
+        <tr><td>Main-thread task submissions</td><td class="num">~3,000</td><td class="num">1</td></tr>
+        <tr><td><code>rebuild()</code> tag merges</td><td class="num">~6,000</td><td class="num">~0</td></tr>
+        <tr><td>NMS entities constructed (<code>createCreature</code> + <code>finalizeSpawn</code> + <code>load</code>)</td><td class="num">~3,000</td><td class="num">only non-representative stacks</td></tr>
+        <tr><td><code>UUID.randomUUID()</code> (SecureRandom) calls</td><td class="num">~3,000</td><td class="num">~0</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      The unstack cycle drops from "one NMS entity build per stack" to near zero for idle and spawner-fed stacks,
+      and the per-cycle task count drops from thousands to one.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      (a) can delay an unstack by up to N cycles for a stack that mutated without touching
+      <code>lastModifiedTicks</code>; the bounded fallback keeps that finite. (c) changes which comparison path
+      runs for clone-like NBT stacks - it should be gated behind the same reasoning as PR #8 and ideally behind a
+      config toggle for one release. (d)'s <code>finalizeSpawn</code> skip is the only genuine behaviour change and
+      is called out separately above.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      Watch the spark nodes <code>StackedEntity#shouldStayStacked</code> and
+      <code>NBTEntityDataEntry#createEntity</code> underneath the sync scheduler. Log a counter of entities
+      constructed per unstack cycle; the target is single digits on a farm-heavy world.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p1" id="a3">
+  <h3>A3. Nametag and hologram passes still schedule per-stack and per-player main-thread tasks</h3>
+  <p class="badges">
+    <span class="badge p1">P1</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-med">Risk Med</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      After PR #12 the nametag pass culls by distance off-thread first, but three scheduling points remain:
+    </p>
+    <ul>
+      <li><code>processNametags</code> (<span class="path">StackingThread.java:314-359</span>) schedules one
+          main-thread task per online player, every 30 ticks, just to snapshot that player's location and main-hand
+          item.</li>
+      <li><code>processEntityNametags</code> (<span class="path">StackingThread.java:362-439</span>) schedules one
+          task per stack that has any player within 75 blocks
+          (<code>StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE</code>,
+          <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/StackerUtils.java:39</span>),
+          purely so it can call <code>entity.getTrackedBy()</code> on the right thread - and then schedules
+          <em>another</em> task per affected (stack, player) pair to send the packet.
+          <code>processItemNametags</code> (<span class="path">StackingThread.java:441-483</span>) has the same
+          shape.</li>
+      <li><code>HologramManager#updateWatchers</code>
+          (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/HologramManager.java:88-103</span>)
+          schedules one task per online player every <code>HOLOGRAM_UPDATE_FREQUENCY</code> ticks (default 20) -
+          about 135 tasks per second on this server - to read eye locations and reconcile watchers.</li>
+    </ul>
+    <p>
+      Separately, <code>StackedEntity#updateDisplaySafely</code>
+      (<span class="path">StackedEntity.java:744-749</span>) schedules a main-thread task on every stack size
+      change, and the spawner path calls it once per modified stack per spawn cycle
+      (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/spawning/MobSpawningMethod.java:345</span>).
+      That is a fourth source of the same problem and should be folded into the same batching.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      With 135 players concentrated in farms, hundreds to thousands of tasks per 30-tick cycle. This is currently
+      the largest single consumer inside the 0.90 ms/tick sync-scheduler figure, and the 0.51 + 0.16 ms/tick
+      line-of-sight cost sits inside these tasks on the main thread rather than on an async worker.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>Make both passes main-thread-free on Paper:</p>
+    <ol>
+      <li><strong>Own the tracker set.</strong> The plugin already listens to <code>PlayerTrackEntityEvent</code>
+          and <code>PlayerUntrackEntityEvent</code>
+          (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/listener/EntityTrackingListener.java:33-41</span>).
+          Extend it to maintain a <code>Set&lt;UUID&gt; trackedBy</code> on <code>StackedEntity</code>, cleared on
+          <code>PlayerQuitEvent</code> (already handled there at line 43-49). The pass then never needs
+          <code>Entity#getTrackedBy()</code> on the main thread. (<code>getTrackedBy()</code> is declared on both
+          supported Paper API versions, so the current code path is available everywhere; the point of the change
+          is to stop needing the main thread to call it.)</li>
+      <li><strong>Read player state off-thread.</strong> Location doubles are already read racily throughout this
+          file. <code>ItemUtils.isStackingTool(getItemInMainHand())</code> can either be read racily too or, better,
+          be maintained as a boolean flag updated from <code>PlayerItemHeldEvent</code> and the inventory events.
+          That removes <code>processNametags</code>'s per-player snapshot task entirely.</li>
+      <li><strong>Send packets from the async thread.</strong> <code>NMSHandlerImpl#updateEntityNameTagForPlayer</code>
+          (<span class="path">NMS/v26_2_R1/…/NMSHandlerImpl.java:264-278</span>) only builds a
+          <code>ClientboundSetEntityDataPacket</code> and calls <code>connection.send(...)</code>, which Netty
+          queues - safe off-thread on Paper. For the stacking-tool particles, build a
+          <code>ClientboundLevelParticlesPacket</code> and send it the same way instead of calling
+          <code>Player#spawnParticle</code>.</li>
+      <li><strong>Run the hologram watcher update entirely on its async timer.</strong>
+          <code>updateWatcher</code> reads the player's eye location, the hologram locations, walks blocks (the
+          in-flight branch reads live chunks) and sends packets. Reading block states off-thread is racy but
+          tolerable for a visibility heuristic; if that is unacceptable, keep only the wall check on-thread and
+          only when the player has moved.</li>
+      <li><strong>Fall back</strong> to the current scheduled path on Spigot (no track/untrack events) and on
+          Folia.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      The nametag and hologram passes stop contributing to the main thread at all. Their CPU cost moves to the
+      async pool, where it does not affect MSPT. Given the profile, this is the largest single removal available
+      on the main thread.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Off-thread reads of entity and player state are racy. The codebase already accepts this for positions, and
+      the failure mode is a nametag that is one cycle stale. Off-thread packet sending is standard on Paper but is
+      the one piece here that has <em>not</em> been confirmed against UniverseSpigot specifically, and is the most
+      likely to surprise; put the whole behaviour behind a config toggle so it can be turned off on a live server
+      without a rollback. Block reads off-thread on a Paper fork with async world ticking need a
+      second look - a chunk being unloaded concurrently must not produce an exception path.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      The sync scheduler tree should no longer contain
+      <code>StackingThread.lambda$processEntityNametags$…</code> or
+      <code>HologramManager.lambda$updateWatchers$…</code>. Cross-check that the async pool picks up the
+      corresponding time with <code>/spark profiler --thread *</code>.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="a4">
+  <h3>A4. The orphaned-entity rescan runs on the main thread over every entity in the world</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>cleanupOrphanedEntities</code> (<span class="path">StackingThread.java:242-256</span>) is registered
+      with the <em>synchronous</em> timer (<span class="path">StackingThread.java:119-120</span>) and runs every
+      <code>ENTITY_RESCAN_FREQUENCY</code> ticks (default 1000). It calls
+      <code>this.targetWorld.getEntities()</code>, which allocates a list of every entity in the world, then per
+      entity calls <code>isRemoved</code> (the metadata string build from A1) and, for unstacked candidates,
+      <code>stackManager.isAreaDisabled(entity.getLocation())</code> - a WorldGuard region query when WorldGuard is
+      installed.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      One 12,000-element list allocation plus 12,000 metadata lookups and up to 12,000 region queries, all inside a
+      single tick, every 50 seconds. It is a small average but a visible spike.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>
+      Run the scan asynchronously over the <code>EntityCacheManager</code> cells (or
+      <code>nmsHandler.getEntities(world)</code>), and schedule only the rare <code>createEntityStack</code> calls -
+      through the F1 batch executor. Combine with the <code>isRemoved</code> flag change from A1 and the per-chunk
+      WorldGuard cache from <a href="#d3">D3</a>, both of which this scan benefits from directly.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>The 1000-tick spike flattens to whatever number of genuinely orphaned entities exists, usually zero.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Iterating the world entity list off-thread is not safe in general; use the cache manager's snapshot cells
+      rather than <code>World#getEntities</code>, and accept that an entity that spawned in the last 60 ticks may
+      be picked up on the next pass instead.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>StackingThread#cleanupOrphanedEntities</code> should vanish from the main-thread tree. Log the number
+      of stacks created per rescan; if it is not near zero, the rescan is masking a bug worth fixing separately.
+    </p>
+  </div></div>
+</div>
+
+<h2 id="group-b">4. Group B - Spawner tick and spawn path (world tick threads)</h2>
+
+<div class="finding b-p0" id="b1">
+  <h3>B1. Every entity stack creation eagerly serializes the entity to NBT, including the stacks that stay at size 1</h3>
+  <p class="badges">
+    <span class="badge p0">P0</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Tick thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      The NBT storage constructor performs a full entity save up front:
+    </p>
+<pre><span class="c">// NMS/v26_2_R1/…/storage/NBTStackedEntityDataStorage.java:36-44</span>
+<span class="k">public</span> NBTStackedEntityDataStorage(LivingEntity livingEntity) {
+    <span class="k">super</span>(StackedEntityDataStorageType.NBT, livingEntity);
+    this.base = ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity); <span class="c">// Entity#saveWithoutId</span>
+    this.stripUnneeded(this.base);
+    this.stripAttributeUuids(this.base);
+    NMSHandler.UNSAFE_NBT_KEYS.forEach(this.base::remove);
+    this.data = createBackingQueue();
+}</pre>
+    <p>
+      <code>StackedEntity</code>'s convenience constructor creates that storage unconditionally
+      (<span class="path">StackedEntity.java:117-119</span>), and it is called from every path that produces a
+      stack:
+    </p>
+    <ul>
+      <li><code>createEntityStack</code> on every <code>CreatureSpawnEvent</code> and on chunk load
+          (<span class="path">StackingThread.java:774-791</span>)</li>
+      <li><code>StackingThread#createNewEntity</code>, the helper behind <code>preStackEntities</code>
+          (<span class="path">StackingThread.java:943-949</span>)</li>
+      <li>one per spawned mob in the spawner path
+          (<span class="path">MobSpawningMethod.java:308</span> and <span class="path">:336</span>)</li>
+      <li>the split-off entity in <code>decreaseStackSize</code> (<span class="path">StackedEntity.java:225</span>)</li>
+    </ul>
+    <p>
+      In the NBT spawner path the save happens twice per mob: <code>new StackedEntity(...)</code> saves the entity
+      into its own <code>base</code>, and then <code>increaseStackSize(newStack.getEntity(), false)</code> calls
+      <code>add(LivingEntity)</code> (<span class="path">…/NBTStackedEntityDataStorage.java:72-80</span>) which
+      saves the same entity again. The first storage is then discarded.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      <code>Entity#saveWithoutId</code> walks every component of the entity through a
+      <code>TagValueOutput</code> with a <code>ProblemReporter</code> and allocates a tag tree per call. Running it
+      for every mob that spawns, loads, or is split off - on the world tick thread, inside spawner ticking - is the
+      dominant per-spawn cost after entity construction itself, and it is entirely wasted for the ~99% of stacks
+      that never grow past size 1 or that merge immediately.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li><strong>Make <code>base</code> lazy.</strong> Compute it on first use - that is, in <code>add</code>,
+          <code>addAll</code>, <code>addClones</code>, <code>peek</code>/<code>pop</code>/<code>getAll</code>,
+          <code>serialize</code>, <code>removeDuplicates</code> and <code>rebuild</code>. Note that
+          <code>serialize</code> is only ever reached for size &gt; 1, because
+          <code>DataUtils#writeStackedEntity</code> returns immediately for size 1
+          (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/DataUtils.java:96-98</span>).</li>
+      <li><strong>Reuse the tag in the spawner path.</strong> Add an <code>add(EntityDataEntry)</code> /
+          <code>add(CompoundTag)</code> overload on the storage and hand the already-saved tag to it when the
+          spawned mob merges into an existing stack, instead of saving twice. The
+          <code>NBTEntityDataEntry(LivingEntity)</code> constructor
+          (<span class="path">NMS/v26_2_R1/…/storage/NBTEntityDataEntry.java:32-34</span>) already produces
+          exactly that tag.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Before / after</div><div>
+    <table>
+      <thead><tr><th>Per mob spawned by a stacked spawner (NBT mode)</th><th class="num">Today</th><th class="num">Proposed</th></tr></thead>
+      <tbody>
+        <tr><td><code>saveEntityToTag</code> calls</td><td class="num">2</td><td class="num">1</td></tr>
+        <tr><td>Discarded <code>CompoundTag</code> trees</td><td class="num">1</td><td class="num">0</td></tr>
+        <tr><td>Per mob that spawns naturally and never stacks</td><td class="num">1</td><td class="num">0</td></tr>
+        <tr><td>Per mob restored on chunk load into a size-1 stack</td><td class="num">1</td><td class="num">0</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      One full NBT save removed per spawned or loaded mob, and one more removed per spawner spawn that merges. On
+      farm-heavy worlds this is the largest single item inside the 0.86 / 0.80 ms/tick spawner numbers once the
+      per-attempt work of B2 is also addressed.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      <code>base</code> is captured later than it is today - at first stack growth rather than at creation. It is
+      the head entity's own data and is used only as a template and as a deduplication baseline, so a later capture
+      is at least as accurate as an earlier one. The case to think through carefully is
+      <code>decreaseStackSize</code>'s <code>new StackedEntity(oldEntity, ...)</code>
+      (<span class="path">StackedEntity.java:225</span>), where the split-off entity's storage is created while the
+      original stack is being mutated. Laziness must be thread-safe (the storage is touched from async passes as
+      well as the tick threads) - a <code>synchronized</code> accessor or a
+      <code>volatile</code>-guarded double-check is sufficient.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      Count <code>NMSHandlerImpl#saveEntityToTag</code> samples under <code>CreatureSpawnEvent</code> and
+      <code>SpawnerSpawnEvent</code> in spark, or add a per-minute counter. Compare
+      <code>saveEntityToTag</code> calls per minute before and after; the expected ratio on a spawner farm is
+      roughly 2:0.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p1" id="b2">
+  <h3>B2. The spawner spawn-attempt loop repeats work per attempt and per spawn</h3>
+  <p class="badges">
+    <span class="badge p1">P1</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Tick thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      In <code>MobSpawningMethod</code>'s spawn task
+      (<span class="path">MobSpawningMethod.java:92-219</span>), each attempt of the loop at
+      <span class="path">:114-137</span> allocates a <code>Location</code> for the
+      <code>invalidLocations</code> multimap (which hashes doubles), plus a second <code>Location</code> and a
+      <code>CraftBlock</code> for the condition checks:
+    </p>
+<pre><span class="c">// MobSpawningMethod.java:114-126 (master; the in-flight branch reads the spawner coords once)</span>
+<span class="k">while</span> (attempts &lt;= maxFailedSpawnAttempts) {
+    <span class="k">int</span> xOffset = this.random.nextInt(spawnRange * 2 + 1) - spawnRange;
+    ...
+    Location spawnLocation = stackedSpawner.getLocation().clone().add(xOffset + 0.5, yOffset, zOffset + 0.5);
+    <span class="k">if</span> (invalidLocations.containsKey(spawnLocation)) { maxFailedSpawnAttempts--; <span class="k">continue</span>; }
+    Block target = stackedSpawner.getLocation().clone().add(xOffset, yOffset, zOffset).getBlock();
+    ...
+}</pre>
+    <p>
+      <code>maxFailedSpawnAttempts</code> is <code>SPAWNER_MAX_FAILED_SPAWN_ATTEMPTS * spawnRange&sup2;</code>
+      (<span class="path">MobSpawningMethod.java:107</span>), which with the default of 50 and a spawn range of 4
+      gives 800 attempts every time a farm has no valid spot - a common steady state for a full farm.
+    </p>
+    <p>
+      <code>trySpawns</code> (<span class="path">NMS/v26_2_R1/…/spawner/StackedSpawnerTileImpl.java:106-119</span>)
+      allocates <code>new MobSpawningMethod(entityType)</code> per spawn, and that constructor allocates
+      <code>new Random()</code> (<span class="path">MobSpawningMethod.java:61</span>) - a seed-uniquifier CAS loop
+      plus <code>System.nanoTime()</code>. It also re-parses <code>NamespacedKey.fromString(typeId)</code> per
+      spawn even though <code>getSpawnerType()</code> is already cached by identity since PR #9
+      (<span class="path">…/StackedSpawnerTileImpl.java:163-178</span>).
+    </p>
+    <p>
+      Per spawned mob in NBT mode, <code>spawnEntitiesIntoNearbyStacks</code>
+      (<span class="path">MobSpawningMethod.java:270-389</span>) re-scans all nearby stacks with a stream
+      <code>filter(...).findAny()</code> (<span class="path">:309-311</span>), even though after the first match
+      the same stack usually keeps matching until it is full.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      This runs on the world tick thread inside spawner ticking, once per spawner per spawn interval, multiplied by
+      the number of loaded stacked spawners. It is the bulk of the 0.86 ms/tick (overworld) and 0.80 ms/tick (End)
+      attributions once B1 removes the NBT saves.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li><strong>Cache known-good spawn offsets per spawner.</strong> Keep a small ring buffer of packed
+          <code>int</code> offsets that recently produced a valid spawn location, and re-validate those first.
+          Mob farms are static, so this collapses the 800-attempt random search into a handful of checks. Fall back
+          to random sampling only when the cached offsets fail.</li>
+      <li><strong>Key <code>invalidLocations</code> by a packed <code>long</code></strong> of the block
+          coordinates instead of by <code>Location</code>, removing the allocation and the double hashing.</li>
+      <li><strong>Reuse one <code>MobSpawningMethod</code> per spawner tile</strong>, stored on
+          <code>StackedSpawnerTileImpl</code> and reset when the spawner type changes; take the
+          <code>EntityType</code> from the already-cached <code>SpawnerType</code> rather than re-parsing the
+          namespaced key; use <code>ThreadLocalRandom</code> instead of a per-instance <code>Random</code>.</li>
+      <li><strong>Remember the last matched stack</strong> in <code>spawnEntitiesIntoNearbyStacks</code> and try it
+          first; fall back to the full scan only when it is full or fails the conditions.</li>
+      <li><strong>Precompute bounding-box dimensions per <code>EntityType</code></strong> once, so the
+          intersecting-block walk used by the air/fluid conditions is integer math with no
+          <code>BoundingBox</code> clone-shift-expand and no <code>Location</code> allocation per check.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      The per-spawn cost drops from "hundreds of block probes plus per-attempt allocation" to a handful of probes.
+      Combined with B1 this should be the bulk of the tick-thread reduction.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      The offset cache can go stale if a player rebuilds the farm; bound its size, re-validate every cached offset
+      before use, and evict on failure so a stale entry costs one wasted check. Sharing a
+      <code>MobSpawningMethod</code> per tile means it must hold no per-spawn mutable state beyond what is reset.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      In spark, <code>StackedSpawnerTileImpl#serverTick -&gt; MobSpawningMethod#spawn</code> on each world tick
+      thread. Add a counter for attempts per successful spawn; today a saturated farm sits at the
+      <code>maxFailedSpawnAttempts</code> ceiling.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="b3">
+  <h3>B3. <code>isNearPlayer</code> iterates every player in the level, per spawner, every 10 ticks</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Tick thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+<pre><span class="c">// NMS/v26_2_R1/…/spawner/StackedSpawnerTileImpl.java:143-147</span>
+<span class="k">private boolean</span> isNearPlayer(Level level, BlockPos blockPos) {
+    <span class="k">if</span> (this.stackedSpawner.getStackSettings().hasUnlimitedPlayerActivationRange()) <span class="k">return true</span>;
+    <span class="k">return</span> level.hasNearbyAlivePlayer(blockPos.getX() + 0.5D, blockPos.getY() + 0.5D, blockPos.getZ() + 0.5D,
+            Math.max(this.stackedSpawner.getStackSettings().getPlayerActivationRange(), 0.1));
+}</pre>
+    <p>
+      Called from <code>serverTick</code> every <code>SPAWNER_PLAYER_CHECK_FREQUENCY</code> ticks (default 10,
+      <span class="path">Plugin/…/config/SettingKey.java:154</span>) for every loaded stacked spawner.
+      <code>Level#hasNearbyAlivePlayer</code> walks the level's player list linearly.
+    </p>
+    <p>
+      Separately, <code>StackedSpawner#updateSpawnerProperties</code>
+      (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedSpawner.java:231-257</span>)
+      calls up to six tile setters, and each of those calls <code>updateTile()</code>
+      (<span class="path">…/StackedSpawnerTileImpl.java:121-127</span>), which does a
+      <code>blockEntityChanged</code> plus a <code>sendBlockUpdated</code> to every tracking player - so a single
+      stack size change can produce six block-update broadcasts. It also re-reads
+      <code>this.block.getState()</code> at line 255, which copies the spawner block entity's NBT.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      With thousands of loaded stacked spawners and 135 players this is O(spawners x players) / 10 per tick on the
+      world tick thread, before any spawning work happens at all.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li>Use the server's spatial nearby-player structure through the NMS handler where available (Paper's
+          <code>ServerLevel</code> nearby-players index / <code>NearbyPlayers</code>, or the
+          <code>ChunkMap</code> player tracking), rather than a linear scan.</li>
+      <li>If that is not available on every supported module, keep one shared per-world snapshot of player
+          positions refreshed once per tick and distance-check against that array - the check itself is then a few
+          nanoseconds of primitive math per spawner.</li>
+      <li>Batch <code>updateSpawnerProperties</code> into a single <code>updateTile()</code> at the end, by
+          adding a "suppress updates" flag on the tile or a bulk setter.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>Removes a term that grows with both player count and spawner count - the worst scaling shape in the plugin.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Per-tick player snapshots can be one tick stale, which is irrelevant for a 10-tick activation check. The
+      NMS-specific nearby-player structure differs between modules and versions; the snapshot fallback avoids that
+      entirely and is the safer first implementation.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>Level#hasNearbyAlivePlayer</code> under <code>StackedSpawnerTileImpl#serverTick</code> in the per-world
+      tick-thread profile.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="b4">
+  <h3>B4. <code>MaxNearbyEntityConditionTag</code> scans nearby entities, then the spawn path scans again</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Tick thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/settings/conditions/spawner/tags/MaxNearbyEntityConditionTag.java:30-56</span>
+      runs a full <code>EntityCacheManager#getNearbyEntities</code> per spawn cycle per spawner, which allocates a
+      <code>Location</code>, a <code>BoundingBox</code>, a result <code>HashSet</code> and a
+      <code>ChunkLocation</code> per scanned cell. When
+      <code>SPAWNER_MAX_NEARBY_ENTITIES_INCLUDE_STACKS</code> is enabled it then streams the results with a
+      <code>StackManager</code> lookup per entity, just to produce a sum that is compared against a threshold.
+      Immediately afterwards, <code>spawnEntitiesIntoNearbyStacks</code> performs a second
+      <code>getNearbyEntities</code> scan over an overlapping radius
+      (<span class="path">MobSpawningMethod.java:278</span>).
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Two cell scans plus two result collections per spawner per spawn cycle, with the whole result set discarded
+      after a size comparison in the first case.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li>Add an allocation-free counting variant to <code>EntityCacheManager</code> -
+          <code>int countNearby(World, double x, double y, double z, double radius, Predicate&lt;Entity&gt;, int max)</code> -
+          that iterates cells and returns as soon as <code>max</code> is reached. The condition only needs
+          "fewer than N", never the exact count.</li>
+      <li>Pass the already-collected nearby list into <code>spawnEntitiesIntoNearbyStacks</code> instead of
+          scanning a second time, when the two radii allow it (otherwise scan once at the larger radius and filter
+          down).</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>One scan instead of two, with an early exit on the common "farm is full" case.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      With <code>include-stacks</code> enabled the early exit must sum stack sizes rather than count entities, so
+      the counter needs an int-valued weight function. Behaviour is otherwise identical.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>EntityCacheManager#getNearbyEntities</code> sample count under
+      <code>MobSpawningMethod#spawn</code> should roughly halve.
+    </p>
+  </div></div>
+</div>
+
+<h2 id="group-c">5. Group C - Entity data storage and NMS layer</h2>
+
+<div class="finding b-p1" id="c1">
+  <h3>C1. SecureRandom UUIDs on entity materialization and hologram spawn</h3>
+  <p class="badges">
+    <span class="badge p1">P1</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>UUID.randomUUID()</code> pulls from a shared <code>SecureRandom</code> instance whose
+      <code>nextBytes</code> is synchronized, so it both costs more than a normal PRNG draw and serializes across
+      threads. Two call sites are genuinely hot:
+    </p>
+    <ul>
+      <li><code>NBTEntityDataEntry.createEntity</code>
+          (<span class="path">NMS/v26_2_R1/…/storage/NBTEntityDataEntry.java:59</span>) - one per entity
+          materialized, which today means one per NBT stack per unstack cycle (A2), plus every kill with accurate
+          drops, since <code>forEachCapped</code> rebuilds every member and therefore multiplies by stack size.</li>
+      <li><code>HologramImpl.create</code>
+          (<span class="path">NMS/v26_2_R1/src/main/java/dev/rosewood/rosestacker/nms/v26_2_R1/hologram/HologramImpl.java:36-56</span>)
+          - one per hologram line, every time a player starts watching a hologram. With 135 players walking past
+          spawner farms this fires constantly.</li>
+    </ul>
+    <div class="note">
+      <strong>Correction to the original finding</strong>
+      <code>NBTStackedEntityDataStorage#fillAttributeUuids</code>
+      (<span class="path">…/NBTStackedEntityDataStorage.java:279-292</span>) reads
+      <code>compoundTag.getListOrEmpty("Attributes")</code> - the pre-1.20.5 capital-A key. Modern saves use the
+      lowercase <code>"attributes"</code> key: <code>NMSHandler.UNSAFE_NBT_KEYS</code> lists both spellings
+      (<span class="path">NMS/Wrapper/src/main/java/dev/rosewood/rosestacker/nms/NMSHandler.java:51-60</span>) and
+      the <code>STRIP_OLD_ATTRIBUTES</code> migration strips lowercase <code>"attributes"</code>
+      (<span class="path">…/NBTStackedEntityDataStorage.java:66-68</span>,
+      <span class="path">Plugin/…/utils/DataUtils.java:91-95</span>). On the 1.21+/26.x modules the list is
+      therefore empty and the loop body - including its <code>UUID.randomUUID()</code> calls - never executes.
+      It is dead code, not a hot spot. Confirm with a one-line debug log before deleting it, then delete it for the
+      modern modules and leave it in place for the &le;1.20 modules.
+    </div>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Each <code>SecureRandom</code> draw is orders of magnitude more expensive than a
+      <code>ThreadLocalRandom</code> draw, and the synchronization means the world tick threads and the main thread
+      contend with each other on it.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ul>
+      <li>In <code>createEntity</code>, either use <code>Mth.createInsecureUUID(RandomSource)</code> or simply
+          <code>remove("UUID")</code> from the tag - the entity was already constructed with a fresh UUID by
+          <code>createCreature</code>, so the store is only there to avoid a duplicate and removal achieves the
+          same result for free.</li>
+      <li>Generate hologram line UUIDs once per <code>HologramLine</code> and reuse them for every watcher. The
+          client only needs the UUID to be stable per entity id.</li>
+      <li>Delete the capital-A attribute UUID plumbing on the modern modules once confirmed dead (see the
+          correction above).</li>
+    </ul>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>Removes a synchronized, cross-thread bottleneck from two paths that fire on player movement and on every kill.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Insecure UUIDs are already what vanilla uses for entities (<code>Mth.createInsecureUUID</code> is the
+      server's own helper). Reusing hologram line UUIDs is safe as long as one line is never shown twice
+      simultaneously to the same client under different entity ids.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      Look for <code>SecureRandom#nextBytes</code> / <code>UUID#randomUUID</code> in the
+      <code>--alloc</code> and normal profiles; on a busy server it currently shows up under both
+      <code>createEntity</code> and <code>HologramImpl#create</code>.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="c2">
+  <h3>C2. Double <code>CompoundTag</code> copy on materialization, and byte-at-a-time NBT reads</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>rebuild()</code> (<span class="path">…/NBTStackedEntityDataStorage.java:247-252</span>) already
+      constructs a brand new <code>CompoundTag</code> by merging <code>base</code> and the member tag. Its only
+      caller then copies it again:
+    </p>
+<pre><span class="c">// NBTEntityDataEntry.java:46-48 - nbt is already a private, freshly merged tag</span>
+NMSHandlerImpl nmsHandler = (NMSHandlerImpl) NMSAdapter.getHandler();
+CompoundTag nbt = this.compoundTag.copy();   <span class="c">// second deep copy of the whole entity tag</span></pre>
+    <p>
+      Separately, <code>DataUtils#readStackedEntity</code> reads the stored payload one byte at a time in three
+      places (<span class="path">Plugin/…/utils/DataUtils.java:63-65</span>,
+      <span class="path">:70-72</span>, <span class="path">:76-78</span>):
+    </p>
+<pre><span class="c">// DataUtils.java:63-65</span>
+<span class="k">byte</span>[] nbt = <span class="k">new byte</span>[length];
+<span class="k">for</span> (<span class="k">int</span> i = 0; i &lt; length; i++)
+    nbt[i] = dataInput.readByte();   <span class="c">// per-byte virtual call through GZIPInputStream</span></pre>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Both hit on chunk load, on kill, and on every unstack. The deep tag copy is proportional to entity
+      complexity (villagers and horses are the worst), and the per-byte read defeats the buffered read path in
+      <code>GZIPInputStream</code>.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ul>
+      <li>Add an "owned tag" constructor flag to <code>NBTEntityDataEntry</code> so <code>createEntity</code> can
+          mutate the tag in place when the entry owns it (which is exactly the <code>rebuild()</code> path); keep
+          the copy for entries constructed directly from a stored tag.</li>
+      <li>Replace the three read loops with <code>dataInput.readFully(nbt)</code>.</li>
+    </ul>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>One deep tag copy removed per materialized entity; chunk-load deserialization becomes a bulk read.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      The owned-tag flag must be set only where the tag is provably not shared - <code>peek()</code> and
+      <code>pop()</code> both return <code>new NBTEntityDataEntry(this.rebuild(...))</code>, which is safe;
+      <code>getAll()</code> needs checking against the same rule.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>CompoundTag#copy</code> sample count under <code>NBTEntityDataEntry#createEntity</code>, and
+      <code>DataUtils#readStackedEntity</code> during a chunk-load burst.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="c3">
+  <h3>C3. The shared-damage path deserializes and re-serializes the entire stack per damage event</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-med">Risk Med</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>EntityListener#onEntityDamage</code>
+      (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/listener/EntityListener.java:308-345</span>)
+      calls <code>storage.removeIf(...)</code> when the damage cause is in
+      <code>ENTITY_SHARE_DAMAGE_CONDITIONS</code>. For NBT storage
+      (<span class="path">…/NBTStackedEntityDataStorage.java:207-236</span>) that method builds a full NMS entity
+      for <em>every</em> member in order to read and write its health, and then re-serializes every survivor:
+    </p>
+<pre><span class="c">// NBTStackedEntityDataStorage.java:218-228</span>
+LivingEntity entity = <span class="k">new</span> NBTEntityDataEntry(this.rebuild(compoundTag))
+        .createEntity(thisEntity.getLocation(), <span class="k">false</span>, thisEntity.getType());
+<span class="k">if</span> (function.apply(entity)) { removedEntries.add(entity); dataIterator.remove(); }
+<span class="k">else</span> {
+    CompoundTag replacementTag = ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(entity);
+    ...
+    dataIterator.set(replacementTag);
+}</pre>
+    <p>
+      The default value of <code>ENTITY_SHARE_DAMAGE_CONDITIONS</code> is empty, so this is off out of the box -
+      but any server that enables it (FIRE, LAVA and similar are the obvious choices) pays
+      <em>stack size</em> entity constructions plus <em>stack size</em> NBT saves on every damage tick of every
+      burning stack.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      A single 500-mob stack standing in lava produces 500 <code>createCreature</code> calls and 500
+      <code>saveEntityToTag</code> calls per damage tick, on the main thread, from an event handler.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>
+      Add a storage-level operation that manipulates the <code>"Health"</code> tag directly - read the float,
+      subtract, write it back, remove the entry when it reaches zero - with no entity materialization. Only the
+      entries that actually died need to be materialized, and only because the loot code needs real entities.
+      Keep the existing entity-based path for SIMPLE storage, which stores nothing per member anyway.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      Turns an O(stack size) entity-construction loop into an O(stack size) float edit, with entity construction
+      only for the members that died.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Health is not always a plain <code>"Health"</code> float across versions and entity types (absorption,
+      max-health attribute modifiers), so the direct-tag path needs a fallback to the entity path when the key is
+      missing. Because members inherit unset keys from <code>base</code>, and <code>base</code> has all
+      <code>UNSAFE_NBT_KEYS</code> (including health) stripped, the health value must be read from the member tag
+      only - an entry with no <code>"Health"</code> key needs a defined default. Medium risk, and worth gating
+      behind the same setting that enables the feature.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      Enable <code>share-damage-conditions</code> on a test server with a large burning stack and watch
+      <code>NBTStackedEntityDataStorage#removeIf</code> in spark; also count
+      <code>saveEntityToTag</code> calls per second.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p3" id="c4">
+  <h3>C4. Per-call <code>EntityDataAccessor</code> creation and per-player packet allocation on nametag/hologram sends</h3>
+  <p class="badges">
+    <span class="badge p3">P3</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+<pre><span class="c">// NMS/v26_2_R1/…/NMSHandlerImpl.java:264-278 - two accessors allocated per call</span>
+dataValues.add(SynchedEntityData.DataValue.create(
+        EntityDataSerializers.OPTIONAL_COMPONENT.createAccessor(2), nameComponent));
+dataValues.add(SynchedEntityData.DataValue.create(
+        EntityDataSerializers.BOOLEAN.createAccessor(3), customNameVisible));</pre>
+    <p>
+      The same pattern appears in <code>updateEntityNameTagVisibilityForPlayer</code>
+      (<span class="path">…/NMSHandlerImpl.java:280-289</span>). In <code>HologramImpl.update</code>
+      (<span class="path">…/hologram/HologramImpl.java:58-77</span>) a new <code>ArrayList</code> and
+      <code>DataValue</code> are built per line per update, and a new
+      <code>ClientboundSetEntityDataPacket</code> is constructed inside the per-player loop even though the packet
+      contents are identical for every player.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Individually trivial, but these run on every nametag and hologram send, which after PR #12 is still the
+      highest-frequency plugin code on the server.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>
+      Hoist the two accessors to <code>private static final</code> fields (the hologram class already does exactly
+      this with its <code>DATA_VALUES</code> list at <span class="path">…/HologramImpl.java:27-31</span>). In
+      <code>HologramImpl.update</code>, build the packet once outside the player loop and send the same instance
+      to each player - the packet is immutable.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>Allocation reduction proportional to nametag/hologram send volume; no change in behaviour.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      None functionally. Note that the existing <code>if (visible == null) return;</code> inside
+      <code>update</code>'s player loop returns out of the whole line loop rather than continuing to the next
+      player; hoisting the packet is a good moment to look at whether that should be a <code>continue</code>.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p><code>/spark profiler --alloc</code>, filtered to <code>SynchedEntityData$DataValue</code> and <code>ClientboundSetEntityDataPacket</code>.</p>
+  </div></div>
+</div>
+
+<div class="finding b-p3" id="c5">
+  <h3>C5. Storage backing queue is a <code>LinkedBlockingQueue</code></h3>
+  <p class="badges">
+    <span class="badge p3">P3</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+<pre><span class="c">// NMS/Wrapper/src/main/java/dev/rosewood/rosestacker/nms/storage/StackedEntityDataStorage.java:159-161</span>
+<span class="k">public static</span> &lt;T&gt; Queue&lt;T&gt; createBackingQueue() {
+    <span class="k">return new</span> LinkedBlockingQueue&lt;&gt;();
+}</pre>
+    <p>
+      Every add, remove and iteration takes the queue's internal lock, and the bulk operations
+      (<code>forEachTransforming</code>, <code>removeIf</code>) already copy the contents into an
+      <code>ArrayList</code> and write them back under an explicit
+      <code>synchronized (this.data)</code> block, so the queue's own locking is redundant there.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>Lock acquisition plus a node allocation per element, on a structure that is already externally synchronized.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>
+      Use an <code>ArrayDeque</code> guarded by the existing <code>synchronized (this.data)</code> blocks. That
+      requires auditing every access to confirm they all go through those blocks first; if any do not, either add
+      them or leave this one alone.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>Lower allocation and lock overhead on stack growth. Small; this is a cleanup item, not a fix.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Swapping a thread-safe collection for a non-thread-safe one is exactly the kind of change that produces rare
+      corruption if one access path is missed. Do it last, or not at all.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p><code>--alloc</code> profile for <code>LinkedBlockingQueue$Node</code>; correctness by a long soak test with heavy stacking and unstacking.</p>
+  </div></div>
+</div>
+
+<h2 id="group-d">6. Group D - Caching layers</h2>
+
+<div class="finding b-p1" id="d1">
+  <h3>D1. Display-name strings are rebuilt on every display update, and the shared <code>NumberFormat</code> is not thread-safe</h3>
+  <p class="badges">
+    <span class="badge p1">P1</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>StackedEntity#getDisplayName</code> (<span class="path">StackedEntity.java:629-666</span>) memoizes its
+      result in <code>this.displayName</code>, but <code>updateDisplay()</code> clears that memo on every call
+      (<span class="path">StackedEntity.java:673-674</span>), and <code>updateDisplaySafely()</code> is invoked on
+      every stack size change - that is, on every spawner spawn that merges into a stack
+      (<span class="path">StackedEntity.java:146, 158, 181, 187, 221, 264</span>). Each rebuild runs:
+    </p>
+    <ul>
+      <li><code>StackerUtils.formatNumber</code> (<span class="path">Plugin/…/utils/StackerUtils.java:247-249</span>),
+          which delegates to a <em>shared static</em> <code>NumberFormat</code>
+          (<span class="path">…/StackerUtils.java:48</span>). <code>NumberFormat</code> is explicitly not
+          thread-safe, and this is called from the async nametag pass and from the main thread and from the world
+          tick threads concurrently. This is a latent correctness bug, not just a performance issue.</li>
+      <li><code>StringPlaceholders#apply</code>, one regex replacement per placeholder.</li>
+      <li><code>HexUtils#colorify</code>, four regex passes over the result
+          (via RoseGarden's <code>LocaleManager#getLocaleMessage</code>; the local
+          <code>getLocaleMessages</code> override does the same at
+          <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/LocaleManager.java:129-135</span>).</li>
+    </ul>
+    <p>
+      The resulting strings repeat across thousands of stacks - there is only one distinct
+      <code>"5x Zombie"</code> no matter how many stacks currently have five zombies.
+      <code>StackedBlock#updateDisplay</code> (<span class="path">Plugin/…/stack/StackedBlock.java:108-109</span>)
+      and the item tag path do the same thing.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Regex work and string allocation proportional to spawn rate, on whichever thread happens to trigger the
+      update - including the world tick threads via the spawner path.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li>Add a bounded cache per <code>EntityStackSettings</code>, keyed on
+          <code>(stackSize, hasCustomName ? customName : null)</code>, holding the finished colorified string.
+          Invalidate on reload and on <code>LocaleManager#getGeneration</code>
+          (<span class="path">…/LocaleManager.java:98-100</span>) changing - the generation counter was added for
+          exactly this purpose. Reuse the existing <code>BoundedCache</code> from PR #12.</li>
+      <li>Do the same for <code>StackedBlock#updateDisplay</code> and the item tags.</li>
+      <li>Make <code>formatNumber</code> thread-safe: either a <code>ThreadLocal&lt;NumberFormat&gt;</code>, or - since
+          the values are small non-negative integers - a precomputed <code>String[]</code> for 0..max stack size
+          with a formatting fallback above that.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      Display-name construction becomes a map lookup for the overwhelming majority of updates, and one
+      thread-safety bug goes away.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      The cache key must include everything the message actually depends on. If any locale message for entity tags
+      uses a placeholder beyond <code>amount</code> and <code>name</code>, the key must cover it - PR #8 already
+      solved the equivalent problem for spawner holograms by keying only on the placeholders in use, and that
+      approach can be reused verbatim.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>HexUtils#colorify</code> and <code>Pattern#matcher</code> sample counts under
+      <code>StackedEntity#getDisplayName</code>. For the thread-safety fix, the symptom to watch for disappearing
+      is malformed numbers in nametags under load.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p1" id="d2">
+  <h3>D2. PersistentDataContainer flag lookups allocate a <code>NamespacedKey</code> on every call</h3>
+  <p class="badges">
+    <span class="badge p1">P1</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+<pre><span class="c">// Plugin/src/main/java/dev/rosewood/rosestacker/utils/PersistentDataUtils.java:50-52</span>
+<span class="k">public static boolean</span> isUnstackable(Entity entity) {
+    RosePlugin rosePlugin = RoseStacker.getInstance();
+    <span class="k">return</span> entity.getPersistentDataContainer()
+            .has(<span class="k">new</span> NamespacedKey(rosePlugin, UNSTACKABLE_METADATA_NAME), PersistentDataType.INTEGER);
+}</pre>
+    <p>
+      The same shape appears in <code>isAiDisabled</code> (<span class="path">…/PersistentDataUtils.java:113-120</span>),
+      <code>isSpawnedFromSpawner</code> (<span class="path">:133-137</span>),
+      <code>isSpawnedFromTrialSpawner</code> (<span class="path">:150-154</span>) and
+      <code>isSpawnedFromDispenser</code> (<span class="path">:167-170</span>).
+      The <code>NamespacedKey(Plugin, String)</code> constructor lowercases and validates both the namespace and
+      the key, and <code>PersistentDataContainer#has</code> then calls <code>key.toString()</code> - another string
+      concatenation - to perform the map lookup.
+    </p>
+    <p>Call sites, all hot:</p>
+    <ul>
+      <li><code>StackConditions</code> - 2 to 8 key allocations per candidate pair per stacking pass
+          (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/settings/conditions/entity/StackConditions.java:113, 130, 170, 174</span>).</li>
+      <li><code>tryStackItem</code> - per item and per neighbour
+          (<span class="path">StackingThread.java:1321, 1339</span>).</li>
+      <li><code>EntityListener#onEntityTarget</code>
+          (<span class="path">EntityListener.java:217-232</span>) - a very high-frequency event when
+          <code>SPAWNER_DISABLE_ATTACKING</code> is enabled.</li>
+      <li><code>applyDisabledAi</code> on every chunk load and every spawn
+          (<span class="path">StackingThread.java:157</span>,
+          <span class="path">EntityListener.java:157, 212</span>).</li>
+    </ul>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Two string operations plus an object allocation for what should be a single hash lookup, executed millions of
+      times per minute across the stacking passes and the event handlers.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li><strong>Static keys.</strong> Build each <code>NamespacedKey</code> once into a
+          <code>private static final</code> field, initialized lazily on plugin enable. Trivial, zero risk, do it
+          first.</li>
+      <li><strong>Cache the flags on the stack objects.</strong> <code>spawnedFromSpawner</code>,
+          <code>spawnedFromTrialSpawner</code> and <code>spawnedFromDispenser</code> never change after spawn, so
+          they can be read once and stored as a boolean on <code>StackedEntity</code>.
+          <code>unstackable</code> and <code>aiDisabled</code> change only through the setters in the same class
+          (<span class="path">…/PersistentDataUtils.java:41-48, 74-111</span>), so the setters can look the stack
+          up through <code>StackManager</code> and clear the cached value. The condition code then reads plain
+          booleans.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      Step 1 removes the allocations. Step 2 removes the PDC lookups entirely from the stacking-condition inner
+      loop, which is the highest-multiplicity code path in the plugin.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Step 1 is risk-free. Step 2 introduces a cache that can go stale if any other plugin writes RoseStacker's PDC
+      keys directly - unlikely but possible; guard by re-reading the PDC when the stack is created or reloaded from
+      chunk data, so a stale value cannot survive a chunk unload cycle. Note that
+      <code>isSpawnedFromSpawner</code> also consults <code>EntityUtils.hasSpawnerSpawnReason</code>, so the cached
+      value must incorporate both sources.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>NamespacedKey#&lt;init&gt;</code> and <code>CraftPersistentDataContainer#has</code> in the
+      <code>--alloc</code> profile; they should drop out of the top entries under
+      <code>StackConditions#testCanStackWith</code>.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="d3">
+  <h3>D3. WorldGuard region queries run per listener call and per stacking candidate</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-med">Risk Med</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+<pre><span class="c">// Plugin/src/main/java/dev/rosewood/rosestacker/hook/WorldGuardFlagHook.java:38-44</span>
+<span class="k">public static boolean</span> testLocation(Location location) {
+    <span class="k">if</span> (!SettingKey.MISC_WORLDGUARD_REGION.get()) <span class="k">return true</span>;
+    RegionQuery regionQuery = WorldGuard.getInstance().getPlatform().getRegionContainer().createQuery();
+    <span class="k">return</span> regionQuery.testState(BukkitAdapter.adapt(location), <span class="k">null</span>, flag);
+}</pre>
+    <p>
+      Reached through <code>WorldGuardHook#testLocation</code>
+      (<span class="path">Plugin/…/hook/WorldGuardHook.java:36-41</span>) and
+      <code>StackManager#isAreaDisabled</code> from:
+    </p>
+    <ul>
+      <li>the top of nearly every listener - <code>onEntitySpawn</code>
+          (<span class="path">EntityListener.java:120</span>), <code>onCreatureSpawn</code>
+          (<span class="path">:140</span>), <code>onEntityDamage</code> (<span class="path">:313</span>),
+          <code>handleEntityDeath</code> (<span class="path">:382</span>);</li>
+      <li><code>ItemListener#onInventoryPickup</code>
+          (<span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/listener/ItemListener.java:165</span>)
+          - once per hopper pickup of a stacked item;</li>
+      <li><code>tryStackEntity</code>, for the entity <em>and</em> for every nearby candidate
+          (<span class="path">StackingThread.java:1237</span>, <span class="path">:1261</span>);</li>
+      <li>the spawner path, per spawn candidate
+          (<span class="path">MobSpawningMethod.java:310, 327</span>) and per created entity
+          (<span class="path">:394</span>).</li>
+    </ul>
+    <p>Each call creates a fresh <code>RegionQuery</code> and adapts the Bukkit <code>Location</code>.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Only when WorldGuard is installed and <code>misc.worldguard-region</code> is enabled - but under those
+      conditions it is on the critical path of the highest-frequency events on the server, including every hopper
+      pickup.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>
+      Cache per <code>(world, chunk)</code> whether any region intersecting that chunk sets the RoseStacker flag,
+      by calling <code>RegionManager#getApplicableRegions</code> once against the chunk's bounding box. Chunks with
+      no such region short-circuit to "allowed" with no query at all; chunks that do contain a flagged region fall
+      through to the exact per-location query. Refresh the per-chunk answer every ~10 seconds, or invalidate it
+      from WorldGuard's region change events if a suitable event exists in the supported versions.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      On a typical server where flagged regions cover a tiny fraction of loaded chunks, essentially all of these
+      queries become a map lookup.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      A region created or edited inside the refresh window would be honoured up to 10 seconds late. That is
+      acceptable for a stacking flag but must be documented, and the window should be configurable. Chunk-boundary
+      regions need the bounding-box query to be inclusive on both edges.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>RegionQuery#testState</code> / <code>RegionContainer#createQuery</code> sample counts, and a counter of
+      cache hits versus exact queries.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="d4">
+  <h3>D4. Hologram location allocated per check, and the spawner block state re-snapshotted per size change</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Both</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+<pre><span class="c">// Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedSpawner.java:218-220</span>
+<span class="k">public</span> Location getHologramLocation() {
+    <span class="k">return</span> this.block.getLocation().add(0.5, SettingKey.SPAWNER_DISPLAY_TAGS_HEIGHT_OFFSET.get(), 0.5);
+}</pre>
+    <p>
+      <code>Block#getLocation()</code> allocates, and this is called from <code>needsDisplayUpdate()</code>
+      (<span class="path">…/StackedSpawner.java:203-216</span>) for every loaded spawner on every hologram cycle,
+      and again from <code>updateDisplay</code>. <code>HologramManager#holograms</code> is keyed by
+      <code>Location</code>, so each lookup also hashes three doubles.
+      <code>StackedBlock#getHologramLocation</code> (<span class="path">…/stack/StackedBlock.java:114-116</span>)
+      has the same shape.
+    </p>
+    <p>
+      Separately, <code>StackedSpawner#updateSpawnerProperties</code> re-reads
+      <code>this.block.getState()</code> at <span class="path">…/StackedSpawner.java:255-256</span> on every size
+      change, which copies the spawner block entity's NBT into a fresh <code>CraftCreatureSpawner</code> snapshot.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Allocation proportional to (loaded spawners x hologram cycles) plus one block-state copy per stack size
+      change, i.e. per spawner spawn.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>
+      Compute the hologram <code>Location</code> once per <code>StackedSpawner</code>/<code>StackedBlock</code>
+      and store it, invalidating on reload (the height offset is a config value). Consider keying
+      <code>HologramManager#holograms</code> by a packed <code>long</code> block position plus world instead of by
+      <code>Location</code>. Only re-snapshot the block state in <code>updateSpawnerProperties</code> when the
+      spawner type actually changed.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>Removes a steady allocation stream from the hologram cycle and one NBT snapshot per spawn.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      The cached <code>Location</code> is mutable and is currently handed to callers who may mutate it - audit
+      every caller of <code>getHologramLocation</code> and return a defensive copy where needed, or make the stored
+      value immutable by construction.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p><code>--alloc</code> profile for <code>Location</code> under <code>StackedSpawner#needsDisplayUpdate</code>.</p>
+  </div></div>
+</div>
+
+<div class="finding b-p2" id="d5">
+  <h3>D5. The item stacking pass repeats flag lookups and allocates per neighbour</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Async</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>stackItems</code> (<span class="path">StackingThread.java:285-312</span>) runs every
+      <code>ITEM_STACK_FREQUENCY</code> ticks (default 20) over every stacked item, and
+      <code>tryStackItem</code> (<span class="path">StackingThread.java:1311-1385</span>) then does, per item:
+      <code>isRemoved</code> (the metadata string build from A1),
+      <code>PersistentDataUtils.isUnstackable</code> (key allocation plus PDC lookup, see D2), a
+      <code>getNearbyEntities(...).stream().map(...).collect(toSet())</code> chain, and per neighbour an
+      <code>ItemStack#isSimilar</code> (full item-meta comparison), a <code>getOwner</code> check and another
+      <code>isUnstackable</code>.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      This runs on an async worker so it does not directly add MSPT, but on a server with thousands of ground items
+      it is significant CPU and allocation pressure competing with the world tick threads for cores and for GC.
+      <code>ItemStack#isSimilar</code> in particular is expensive on items with meta.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li>Apply the same <code>hasMoved</code>/<code>isRemoved</code> pre-cull as A1 and the flag caching from
+          D2.</li>
+      <li>Group nearby items by a cheap key first - <code>Material</code> plus an item-meta hash (Paper's
+          <code>ItemStack#hashCode</code> is suitable) - so that <code>isSimilar</code> only runs on candidates
+          whose key already matches.</li>
+      <li>Drop the intermediate stream and set; iterate the cache manager's result directly into the existing
+          target collection.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>Fewer full item comparisons and much less garbage per cycle; frees CPU for the tick threads.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      The grouping key must be a strict refinement of <code>isSimilar</code>, or items that should merge will stop
+      merging. If in doubt, use the key only as a fast-reject filter and always confirm with
+      <code>isSimilar</code>.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      <code>StackingThread#tryStackItem</code> in a <code>--thread *</code> profile, and
+      <code>ItemStack#isSimilar</code> sample count per cycle.
+    </p>
+  </div></div>
+</div>
+
+<h2 id="group-e">7. Group E - Persistence and spikes</h2>
+
+<div class="finding b-p2" id="e1">
+  <h3>E1. Autosave and chunk unload serialize every stack, every time</h3>
+  <p class="badges">
+    <span class="badge p2">P2</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      <code>StackingThread#saveAllData</code> (<span class="path">StackingThread.java:1197-1214</span>) is driven
+      by the autosave timer every <code>AUTOSAVE_FREQUENCY</code> minutes (default 15,
+      <span class="path">Plugin/…/config/SettingKey.java:29</span>,
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/StackManager.java:83</span>) and
+      walks every stacked entity, every stacked item and every chunk's blocks and spawners in a single tick.
+      For each stack with size &gt; 1, <code>DataUtils#writeStackedEntity</code>
+      (<span class="path">Plugin/…/utils/DataUtils.java:96-126</span>) serializes and GZIPs the whole storage and
+      writes it into the entity's PDC.
+    </p>
+    <p>
+      The chunk-unload path (<code>saveChunkEntities</code> /
+      <code>saveChunkEntityStacks</code>, <span class="path">StackingThread.java:1148-1195</span>) does the same
+      per unload, and builds several intermediate streams and lists on the way.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      A single tick every 15 minutes that GZIPs thousands of NBT payloads. It does not move the average much, but
+      it is one of the largest single-tick stalls the plugin produces, and unload-time serialization is on the
+      critical path of chunk unloading.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ol>
+      <li><strong>Dirty tracking.</strong> Store a <code>lastSavedModifiedTicks</code> alongside the existing
+          <code>lastModifiedTicks</code> and skip any stack whose value has not changed since the last save. On a
+          settled server most stacks are unchanged between autosaves.</li>
+      <li><strong>Spread the work.</strong> Save N stacks per tick through the F1 budgeted executor rather than all
+          of them in one tick.</li>
+      <li><strong>Move the expensive half off-thread.</strong> Serialization and GZIP need no main-thread state
+          once the storage snapshot is taken; only the PDC write must happen on the entity's thread.</li>
+      <li>Replace the stream chains in <code>saveChunkEntities</code> with direct loops.</li>
+    </ol>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>The 15-minute stall becomes proportional to the number of stacks actually modified, spread across ticks.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Dirty tracking must be conservative: any mutation that does not bump <code>lastModifiedTicks</code> would
+      silently stop being saved. Audit every writer of the storage before relying on it, and keep a "save
+      everything" path for shutdown and for <code>/rs reload</code>.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      Watch for the periodic spike in spark's tick monitor at the autosave interval; log stacks saved versus stacks
+      skipped per autosave.
+    </p>
+  </div></div>
+</div>
+
+<div class="finding b-p3" id="e2">
+  <h3>E2. The entity cache refresh clears and rebuilds every cell in place, on the main thread</h3>
+  <p class="badges">
+    <span class="badge p3">P3</span>
+    <span class="badge neutral">Effort S</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+<pre><span class="c">// Plugin/src/main/java/dev/rosewood/rosestacker/manager/EntityCacheManager.java:162-171
+// scheduled with the sync timer every 60 ticks (EntityCacheManager.java:40)</span>
+<span class="k">private void</span> refresh() {
+    <span class="k">synchronized</span> (this.entityCache) {
+        this.entityCache.clear();
+        <span class="k">for</span> (StackingThread stackingThread : ...getStackingThreads().values())
+            this.addWorldEntities(world, nmsHandler.getEntities(world));
+    }
+}</pre>
+    <p>
+      Cells are keyed by a <code>ChunkLocation</code> record that holds the world <em>name</em> as a
+      <code>String</code>, so every entity insert hashes a string. This is the 0.17 ms/tick "entity cache refresh"
+      line. The in-flight branch already trims some of the per-entity allocation.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      Rebuilding a 12,000-entry multimap every 60 ticks, plus a string hash per entity, plus a window during which
+      readers can observe a partially rebuilt cache while holding the same lock.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <ul>
+      <li>Build the replacement map into a fresh structure and swap the reference atomically. Readers never see a
+          half-built cache, and the <code>clear()</code> plus rehash cost disappears.</li>
+      <li>Pack the cell key as a single <code>long</code> (world index plus cell x/y/z) instead of a record
+          containing a <code>String</code>.</li>
+      <li>Size the cell collections as <code>ArrayList</code>; readers only iterate them.</li>
+      <li>Keep the pass on the tick thread - iterating the level's entity list is not safe off-thread.</li>
+    </ul>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>Roughly halves the refresh cost and removes a lock-contention window against the async stacking passes.</p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Reference swapping changes the visibility semantics slightly: a reader that captured the old map keeps
+      reading 60-tick-old data for the duration of its pass, which is the same staleness bound as today.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p><code>EntityCacheManager#refresh</code> in the main-thread tree; compare ms/tick against the 0.17 baseline.</p>
+  </div></div>
+</div>
+
+<h2 id="group-f">8. Group F - Cross-cutting mechanism</h2>
+
+<div class="finding b-p0" id="f1">
+  <h3>F1. A batched, budgeted main-thread executor</h3>
+  <p class="badges">
+    <span class="badge p0">P0 (enabler)</span>
+    <span class="badge neutral">Effort M</span>
+    <span class="badge risk-low">Risk Low</span>
+    <span class="badge neutral">Main thread</span>
+  </p>
+
+  <div class="row"><div class="lbl">Today</div><div>
+    <p>
+      Each periodic pass calls <code>ThreadUtils.runOnEntity</code> per item, which on a non-Folia server means one
+      Bukkit main-thread task per item - this is what RoseGarden 1.5.7's <code>BukkitSchedulerWrapper</code> does,
+      confirmed against its published sources (see <a href="#context">section 1.1</a>). The main thread drains the whole
+      burst in the tick after it is submitted, so the plugin's worst-case per-tick cost is unbounded and grows with
+      entity count.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Why it costs</div><div>
+    <p>
+      MSPT is decided by the worst ticks, not the average. A design that submits O(entities) tasks in a burst has
+      no ceiling. A design that drains a queue under a time budget has one, by construction.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Proposal</div><div>
+    <p>
+      Add a small utility - one repeating main-thread task per world (or per region on Folia) that drains a queue
+      under a configurable per-tick budget, with a max-age guarantee so nothing starves:
+    </p>
+<pre><span class="k">public final class</span> BatchedMainThreadExecutor {
+
+    <span class="k">private final</span> Queue&lt;Job&gt; queue = <span class="k">new</span> ConcurrentLinkedQueue&lt;&gt;();
+    <span class="k">private final long</span> budgetNanos;   <span class="c">// e.g. 2 ms</span>
+    <span class="k">private final long</span> maxAgeTicks;   <span class="c">// hard deadline; over-run the budget rather than starve</span>
+
+    <span class="c">/** Called from the async passes. Never blocks, never allocates a BukkitTask. */</span>
+    <span class="k">public void</span> submit(Runnable job) { this.queue.add(<span class="k">new</span> Job(job, currentTick())); }
+
+    <span class="c">/** The one repeating main-thread task. */</span>
+    <span class="k">private void</span> drain() {
+        <span class="k">long</span> deadline = System.nanoTime() + this.budgetNanos;
+        Job job;
+        <span class="k">while</span> ((job = this.queue.poll()) != <span class="k">null</span>) {
+            job.run();
+            <span class="k">if</span> (System.nanoTime() &gt;= deadline &amp;&amp; !this.queue.isEmpty()
+                    &amp;&amp; currentTick() - this.queue.peek().submittedTick() &lt; this.maxAgeTicks)
+                <span class="k">break</span>;  <span class="c">// carry the rest to the next tick</span>
+        }
+    }
+}</pre>
+    <p>Usage rules:</p>
+    <ul>
+      <li>Periodic passes (A1, A2, A3 fallback, A4, E1) submit <em>batches</em> - one job that loops a list - rather
+          than one job per entity, so the queue stays short and the per-job overhead is amortized.</li>
+      <li>Event-driven, latency-sensitive work keeps using <code>ThreadUtils.runOnEntity</code> directly. This
+          executor is for periodic maintenance only.</li>
+      <li>On Folia, back it with per-region repeating tasks and route each job to the region owning its location;
+          the budget logic is unchanged.</li>
+      <li>Expose the budget as a config value (default 1-2 ms) plus a debug counter of queue depth, so the
+          behaviour is observable on a live server.</li>
+    </ul>
+  </div></div>
+
+  <div class="row"><div class="lbl">Expected effect</div><div>
+    <p>
+      Converts "thousands of tasks per cycle, drained in one tick" into "one task per tick that never exceeds its
+      budget". This directly caps RoseStacker's main-thread MSPT contribution rather than merely reducing it, which
+      matters more than the absolute number: the plugin stops being able to cause a spike proportional to entity
+      count.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">Risk</div><div>
+    <p>
+      Work can be delayed by a tick or more under load. Every caller must tolerate that, which is why only the
+      periodic passes should use it. The max-age guarantee prevents indefinite starvation if the queue grows faster
+      than the budget drains it; if that condition is hit regularly it is a signal that the upstream pass frequency
+      is too high, and should be logged rather than silently absorbed.
+    </p>
+  </div></div>
+
+  <div class="row"><div class="lbl">How to verify</div><div>
+    <p>
+      Exactly one repeating node per world in the sync scheduler tree, with a bounded self-time. Log queue depth
+      and per-tick drain time at a debug level; the queue should return to empty within a cycle under normal load.
+    </p>
+  </div></div>
+</div>
+
+<h2 id="roadmap">9. Implementation roadmap</h2>
+
+<p>
+  Four phases, each a separate PR, ordered so that the enabling mechanism lands before the findings that depend on
+  it and so the highest-value/lowest-risk work lands first.
+</p>
+
+<table>
+  <thead>
+    <tr><th style="width:70px">Phase</th><th>Contents</th><th style="width:150px">Depends on</th><th style="width:88px">Risk</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>1</strong><br>Quick wins</td>
+      <td>
+        <strong>D2(1)</strong> static <code>NamespacedKey</code>s (do this first - it is mechanical and touches the
+        files the rest of the phase edits) &middot; <strong>F1</strong> batched executor &middot;
+        <strong>A1</strong> async pre-cull and batching &middot; <strong>A2</strong> (a) idle-stack cull,
+        (b) batching, (c) <code>headIsRepresentative</code> fast path &middot;
+        <strong>B1</strong> lazy <code>base</code> &middot; <strong>C1</strong> insecure/removed UUIDs &middot;
+        <strong>D1</strong> display-name cache and thread-safe <code>formatNumber</code> &middot;
+        <strong>D4</strong> cached hologram location
+      </td>
+      <td>in-flight branch <code>perf/spark-2026-09-05</code> merged first</td>
+      <td><span class="badge risk-low">Low</span></td>
+    </tr>
+    <tr>
+      <td><strong>2</strong><br>Spawner path</td>
+      <td>
+        <strong>B2</strong> offset cache, packed keys, reused spawning method, last-matched stack, precomputed
+        bounds &middot; <strong>B4</strong> counting scan and single scan &middot;
+        <strong>B3</strong> nearby-player lookup and batched tile updates &middot;
+        <strong>C2</strong> owned-tag path and <code>readFully</code>
+      </td>
+      <td>B1 (Phase 1) for the measurement to be readable</td>
+      <td><span class="badge risk-low">Low</span></td>
+    </tr>
+    <tr>
+      <td><strong>3</strong><br>Main-thread-free display</td>
+      <td>
+        <strong>A3</strong> nametags and holograms fully async on Paper, with Spigot/Folia fallbacks and a config
+        toggle &middot; <strong>A4</strong> async orphan rescan
+      </td>
+      <td>F1 (fallback path), D2(2) helps</td>
+      <td><span class="badge risk-med">Med</span></td>
+    </tr>
+    <tr>
+      <td><strong>4</strong><br>Optional / config-dependent</td>
+      <td>
+        <strong>D3</strong> WorldGuard per-chunk cache &middot; <strong>C3</strong> shared-damage direct health
+        edit &middot; <strong>D5</strong> item pass &middot; <strong>E1</strong> dirty autosave &middot;
+        <strong>E2</strong> cache swap &middot; <strong>C4</strong> static accessors &middot;
+        <strong>C5</strong> queue swap
+      </td>
+      <td>F1 for E1</td>
+      <td><span class="badge risk-med">Mixed</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Per phase:</p>
+<ol>
+  <li>Build every NMS module: <code>./gradlew build</code>. The storage and handler changes in Groups B and C
+      touch code duplicated across 16 modules; anything version-specific (the attribute UUID deletion in C1, the
+      nearby-player lookup in B3) must be implemented per module or guarded.</li>
+  <li>Deploy to the live server and profile with spark for at least 10 minutes at a comparable player count.</li>
+  <li>Compare the specific nodes named in each finding's "How to verify" line against the recorded baseline.</li>
+  <li>Do not merge the next phase until the previous phase's numbers are recorded - overlapping changes make the
+      attribution unusable.</li>
+</ol>
+
+<h2 id="measurement">10. Measurement plan</h2>
+
+<h3>10.1 Spark views</h3>
+
+<ul>
+  <li><strong>Main thread, filtered to the plugin.</strong> <code>/spark profiler start --timeout 900</code>, then
+      read the tree under <code>CraftScheduler#mainThreadHeartbeat</code>. This is the view that the 0.90 ms/tick
+      figure came from and the one that Phases 1 and 3 must move.</li>
+  <li><strong>Per-world tick threads.</strong> On UniverseSpigot each world ticks on its own thread, so the default
+      "server thread" view hides the spawner cost. Use <code>/spark profiler start --thread *</code> and read the
+      overworld and End tick threads separately - that is where the 0.86 and 0.80 ms/tick figures live, and where
+      Phase 2 must show up.</li>
+  <li><strong>Allocation profile.</strong> <code>/spark profiler start --alloc --thread *</code> for D2, D4, C4 and
+      C5, which are allocation findings and will barely move the CPU profile.</li>
+  <li><strong>Tick monitor.</strong> <code>/spark tickmonitor</code> during an autosave window for E1, and across a
+      stack-pass cycle boundary for A1/A2 - the point of those findings is the spike, not the average.</li>
+</ul>
+
+<h3>10.2 Numbers to record before and after each phase</h3>
+
+<table>
+  <thead>
+    <tr><th>Metric</th><th>Source</th><th>Baseline (2026-09-05)</th><th>Relevant findings</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ms/tick, main thread, all RoseStacker sync tasks</td><td>spark main-thread tree</td><td>0.90</td><td>A1-A4, E1, E2, F1</td></tr>
+    <tr><td>ms/tick, overworld tick thread, spawner ticking</td><td>spark <code>--thread *</code></td><td>0.86</td><td>B1-B4</td></tr>
+    <tr><td>ms/tick, End tick thread, spawner ticking</td><td>spark <code>--thread *</code></td><td>0.80</td><td>B1-B4</td></tr>
+    <tr><td>ms/tick, nametag line-of-sight</td><td>spark main-thread tree</td><td>0.51</td><td>A3</td></tr>
+    <tr><td>ms/tick, spawn-condition line-of-sight</td><td>spark tick threads</td><td>0.19</td><td>B2</td></tr>
+    <tr><td>ms/tick, entity cache refresh</td><td>spark main-thread tree</td><td>0.17</td><td>E2</td></tr>
+    <tr><td>ms/tick, hologram line-of-sight</td><td>spark main-thread tree</td><td>0.16</td><td>A3</td></tr>
+    <tr><td>ms/tick, unstack checks</td><td>spark main-thread tree</td><td>0.14</td><td>A2</td></tr>
+    <tr><td>Main-thread tasks submitted per stacking cycle</td><td>debug counter</td><td>~12,000 (to confirm)</td><td>A1, F1</td></tr>
+    <tr><td>Main-thread tasks submitted per unstack cycle</td><td>debug counter</td><td>= stacks of size &gt; 1</td><td>A2, F1</td></tr>
+    <tr><td><code>saveEntityToTag</code> calls per minute</td><td>debug counter</td><td>to record</td><td>B1, C3</td></tr>
+    <tr><td>NMS entities constructed per unstack cycle</td><td>debug counter</td><td>= NBT stacks of size &gt; 1</td><td>A2</td></tr>
+    <tr><td>Spawn attempts per successful spawn</td><td>debug counter</td><td>up to 800 on a full farm</td><td>B2</td></tr>
+    <tr><td>F1 queue depth and drain time per tick</td><td>debug counter</td><td>n/a</td><td>F1</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Record all of these once more on unmodified master before Phase 1 lands, at a comparable time of day and player
+  count. The 2026-09-05 profile predates PR #12, so the nametag and hologram numbers in particular are expected to
+  already be lower than the table above.
+</p>
+
+<h2 id="appendix-a">Appendix A - Files touched per finding</h2>
+
+<table>
+  <thead><tr><th style="width:52px">ID</th><th>Files</th></tr></thead>
+  <tbody>
+    <tr><td>A1</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackingThread.java</span> (160-186, 1222-1240, 1407-1412)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedEntity.java</span> (removed-flag field)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedItem.java</span> (removed-flag field)
+    </td></tr>
+    <tr><td>A2</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackingThread.java</span> (188-231)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedEntity.java</span> (595-617)<br>
+      <span class="path">NMS/&lt;all&gt;/…/storage/NBTStackedEntityDataStorage.java</span> (98-101, 247-252, 279-292; new <code>headIsRepresentative</code>)<br>
+      <span class="path">NMS/&lt;all&gt;/…/storage/NBTEntityDataEntry.java</span> (44-100)<br>
+      <span class="path">NMS/Wrapper/…/storage/StackedEntityDataStorage.java</span> (new abstract method)
+    </td></tr>
+    <tr><td>A3</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackingThread.java</span> (314-483)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/HologramManager.java</span> (88-103 and <code>updateWatcher</code>)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/listener/EntityTrackingListener.java</span><br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedEntity.java</span> (tracker set, 673-690, 744-749)<br>
+      <span class="path">NMS/&lt;all&gt;/…/NMSHandlerImpl.java</span> (particle packet helper)
+    </td></tr>
+    <tr><td>A4</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackingThread.java</span> (119-120, 242-256)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/EntityCacheManager.java</span> (cell iteration accessor)
+    </td></tr>
+    <tr><td>B1</td><td>
+      <span class="path">NMS/&lt;all&gt;/…/storage/NBTStackedEntityDataStorage.java</span> (36-44 and every <code>base</code> user)<br>
+      <span class="path">NMS/Wrapper/…/storage/StackedEntityDataStorage.java</span> (new <code>add</code> overload)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/spawning/MobSpawningMethod.java</span> (308, 336)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedEntity.java</span> (117-119, 225)
+    </td></tr>
+    <tr><td>B2</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/spawning/MobSpawningMethod.java</span> (54-219, 270-389)<br>
+      <span class="path">NMS/&lt;all&gt;/…/spawner/StackedSpawnerTileImpl.java</span> (106-119)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/settings/conditions/spawner/tags/</span> (air/fluid tags)
+    </td></tr>
+    <tr><td>B3</td><td>
+      <span class="path">NMS/&lt;all&gt;/…/spawner/StackedSpawnerTileImpl.java</span> (121-127, 143-147, 229-299)<br>
+      <span class="path">NMS/Wrapper/…/NMSHandler.java</span> (nearby-player accessor)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedSpawner.java</span> (231-257)
+    </td></tr>
+    <tr><td>B4</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/settings/conditions/spawner/tags/MaxNearbyEntityConditionTag.java</span> (30-56)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/EntityCacheManager.java</span> (new counting method)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/spawning/MobSpawningMethod.java</span> (278)
+    </td></tr>
+    <tr><td>C1</td><td>
+      <span class="path">NMS/&lt;all&gt;/…/storage/NBTEntityDataEntry.java</span> (59)<br>
+      <span class="path">NMS/&lt;all&gt;/…/hologram/HologramImpl.java</span> (36-56)<br>
+      <span class="path">NMS/&lt;1.21+&gt;/…/storage/NBTStackedEntityDataStorage.java</span> (261-292, dead-code removal)
+    </td></tr>
+    <tr><td>C2</td><td>
+      <span class="path">NMS/&lt;all&gt;/…/storage/NBTEntityDataEntry.java</span> (36-48)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/DataUtils.java</span> (63-78)
+    </td></tr>
+    <tr><td>C3</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/listener/EntityListener.java</span> (308-345)<br>
+      <span class="path">NMS/&lt;all&gt;/…/storage/NBTStackedEntityDataStorage.java</span> (207-236)<br>
+      <span class="path">NMS/Wrapper/…/storage/StackedEntityDataStorage.java</span> (new damage method)
+    </td></tr>
+    <tr><td>C4</td><td>
+      <span class="path">NMS/&lt;all&gt;/…/NMSHandlerImpl.java</span> (264-289)<br>
+      <span class="path">NMS/&lt;all&gt;/…/hologram/HologramImpl.java</span> (58-77)
+    </td></tr>
+    <tr><td>C5</td><td>
+      <span class="path">NMS/Wrapper/…/storage/StackedEntityDataStorage.java</span> (159-161)<br>
+      <span class="path">NMS/&lt;all&gt;/…/storage/NBTStackedEntityDataStorage.java</span> (every <code>this.data</code> access)
+    </td></tr>
+    <tr><td>D1</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedEntity.java</span> (629-666, 673-674)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedBlock.java</span> (95-112)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedItem.java</span> (display path)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/StackerUtils.java</span> (48, 247-249)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/settings/EntityStackSettings.java</span> (cache field)
+    </td></tr>
+    <tr><td>D2</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/PersistentDataUtils.java</span> (41-52, 74-120, 125-175)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/settings/conditions/entity/StackConditions.java</span> (113, 130, 170, 174)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedEntity.java</span> / <span class="path">StackedItem.java</span> (cached flags)
+    </td></tr>
+    <tr><td>D3</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/hook/WorldGuardFlagHook.java</span> (38-44)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/hook/WorldGuardHook.java</span> (36-41)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/StackManager.java</span> (<code>isAreaDisabled</code>)
+    </td></tr>
+    <tr><td>D4</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedSpawner.java</span> (203-220, 231-257)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackedBlock.java</span> (114-116)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/HologramManager.java</span> (key type)
+    </td></tr>
+    <tr><td>D5</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackingThread.java</span> (285-312, 1311-1385)
+    </td></tr>
+    <tr><td>E1</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/StackingThread.java</span> (1148-1214)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/DataUtils.java</span> (96-126)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/StackManager.java</span> (83, autosave task)
+    </td></tr>
+    <tr><td>E2</td><td>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/manager/EntityCacheManager.java</span> (40, 150-190)
+    </td></tr>
+    <tr><td>F1</td><td>
+      new: <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/scheduler/BatchedMainThreadExecutor.java</span><br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/utils/ThreadUtils.java</span> (entry point)<br>
+      <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/config/SettingKey.java</span> (budget setting)
+    </td></tr>
+  </tbody>
+</table>
+
+<h2 id="appendix-b">Appendix B - Corrections made while verifying against <code>b52f7668</code></h2>
+
+<table>
+  <thead><tr><th style="width:52px">ID</th><th>Original claim</th><th>Corrected</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>C1</td>
+      <td><code>fillAttributeUuids</code> calls <code>UUID.randomUUID()</code> per attribute and per modifier on
+          every rebuild, making it a <code>SecureRandom</code> hot spot.</td>
+      <td>On the 1.21+/26.x modules it reads the legacy capital-A <code>"Attributes"</code> key, which modern saves
+          do not produce (the storage's own migration and <code>UNSAFE_NBT_KEYS</code> both reference the lowercase
+          <code>"attributes"</code>), so the loop body never runs. Treated as dead code to delete rather than a hot
+          spot to optimize. Worth a one-line debug confirmation before deletion.</td>
+    </tr>
+    <tr>
+      <td>A1</td>
+      <td><code>isRemoved</code> is evaluated on the main thread per scheduled task and should be moved to the
+          async side.</td>
+      <td><code>stackEntities</code> already evaluates <code>isRemoved</code> inline on the async side before
+          scheduling (<span class="path">StackingThread.java:171-175</span>). It is still evaluated a
+          <em>second</em> time inside <code>tryStackEntity</code> on the main thread, and the metadata cost is real
+          in both places, so the flag change still applies - but the culls that need hoisting are
+          <code>stackSettings</code>, <code>checkNPC</code>, <code>hasMoved</code> and the WorldGuard test.</td>
+    </tr>
+    <tr>
+      <td>B4, D2</td>
+      <td>Condition classes live under <span class="path">Plugin/…/conditions/…</span>.</td>
+      <td>They live under <span class="path">Plugin/src/main/java/dev/rosewood/rosestacker/stack/settings/conditions/…</span>.
+          <code>MaxNearbyEntityConditionTag#check</code> spans lines 30-56, not 30-54.</td>
+    </tr>
+    <tr>
+      <td>B1</td>
+      <td><span class="path">StackingThread.java:943-949</span> is <code>preStackEntities</code>.</td>
+      <td>It is <code>StackingThread#createNewEntity</code>, the helper called by <code>preStackEntities</code>
+          (which itself begins at line 870). The <code>new StackedEntity(entity)</code> call is at line 948.</td>
+    </tr>
+    <tr>
+      <td>D1</td>
+      <td><code>getDisplayName</code> rebuilds the string on every call.</td>
+      <td>It memoizes into <code>this.displayName</code> and returns early
+          (<span class="path">StackedEntity.java:630-631</span>); the rebuild happens because
+          <code>updateDisplay()</code> clears the memo (<span class="path">:673-674</span>). The cost is therefore
+          per display update - still once per stack size change, so the proposal is unchanged.</td>
+    </tr>
+    <tr>
+      <td>D3</td>
+      <td><code>EntityListener#onCreatureSpawn</code> calls <code>isAreaDisabled</code> at line 120.</td>
+      <td>Line 120 is <code>onEntitySpawn</code>; <code>onCreatureSpawn</code>'s call is at line 140. Both are on
+          the list. Also, <span class="path">MobSpawningMethod.java:310</span> and <span class="path">:327</span>
+          are <code>WorldGuardHook.testLocation</code> calls, not <code>isAreaDisabled</code> - the
+          <code>isAreaDisabled</code> call in that file is at line 394 inside <code>createNewEntity</code>.</td>
+    </tr>
+    <tr>
+      <td>A3</td>
+      <td>(addition)</td>
+      <td><code>StackedEntity#updateDisplaySafely</code>
+          (<span class="path">StackedEntity.java:744-749</span>) is a fourth per-stack main-thread task source,
+          fired on every stack size change including every spawner merge
+          (<span class="path">MobSpawningMethod.java:345</span>). It was not in the original list and has been
+          folded into A3.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Minor line-number drift (one or two lines) was corrected silently throughout; every
+  <span class="path">path:line</span> reference in this document was read from the working tree at
+  <code>b52f7668</code>. Line numbers for the NMS layer were verified against
+  <span class="path">NMS/v26_2_R1</span> only - the other 15 modules contain near-identical code at different
+  offsets.
+</p>
+
+<h3>Verified outside this repository</h3>
+<div class="note">
+  <strong>Confirmed against the dependency jars, not assumed</strong>
+  <ul style="margin:6px 0 0; padding-left:20px;">
+    <li><strong>RoseGarden 1.5.7 <code>BukkitSchedulerWrapper</code></strong> (published sources jar):
+        <code>isEntityThread(Entity)</code> and <code>isLocationThread(Location)</code> both return
+        <code>Bukkit.isPrimaryThread()</code>; <code>runTaskAtEntity(...)</code> and
+        <code>runTaskAtLocation(...)</code> both delegate to <code>runTask(runnable)</code>, a Bukkit main-thread
+        task. Section 1.1 - and with it the premise of A1, A2, A3 and F1 - is therefore established fact rather
+        than inference.</li>
+    <li><strong>Paper API <code>1.21.11-R0.1-SNAPSHOT</code> and <code>26.2</code></strong> (<code>javap</code>
+        against the jars in the Gradle cache): both declare
+        <code>org.bukkit.entity.Entity#isTicking()</code> and <code>org.bukkit.entity.Entity#getTrackedBy()</code>.
+        A2's idle-stack cull and A3's tracker-set change can both rely on them on every supported version.</li>
+  </ul>
+</div>
+
+<h3>Still not verified</h3>
+<ul>
+  <li>The spark figures in section 1 are from the 2026-09-05 profile and were not re-measured.</li>
+  <li>Off-thread <code>Connection#send</code> safety on UniverseSpigot 1.21.11 specifically (A3, step 3). Standard
+      on upstream Paper, but this fork ticks worlds asynchronously and should be confirmed before Phase 3 ships.</li>
+  <li>Availability and shape of the server's spatial nearby-player structure
+      (<code>NearbyPlayers</code> / <code>ChunkMap</code> player tracking) across the supported NMS modules (B3).
+      The per-world player-position snapshot fallback avoids the question entirely and is the safer first
+      implementation.</li>
+  <li>Whether 1.21+ attribute NBT truly omits the capital-A <code>"Attributes"</code> key at runtime (see the
+      C1 row above) - inferred from the migration code and the key lists, not observed.</li>
+</ul>
+
+<footer>
+  RoseStacker performance proposal &middot; 2026-09-10 &middot; baseline <code>b52f7668</code> &middot;
+  21 findings &middot; prepared for review, nothing implemented.
+</footer>
+
+</body>
+</html>

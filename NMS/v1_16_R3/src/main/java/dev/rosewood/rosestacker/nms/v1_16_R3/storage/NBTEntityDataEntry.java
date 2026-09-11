@@ -2,9 +2,9 @@ package dev.rosewood.rosestacker.nms.v1_16_R3.storage;
 
 import dev.rosewood.rosestacker.nms.NMSAdapter;
 import dev.rosewood.rosestacker.nms.storage.EntityDataEntry;
+import dev.rosewood.rosestacker.nms.util.ExtraUtils;
 import dev.rosewood.rosestacker.nms.v1_16_R3.NMSHandlerImpl;
 import java.util.Optional;
-import java.util.UUID;
 import net.minecraft.server.v1_16_R3.BlockPosition;
 import net.minecraft.server.v1_16_R3.Chunk;
 import net.minecraft.server.v1_16_R3.ChunkStatus;
@@ -28,14 +28,26 @@ import org.bukkit.entity.LivingEntity;
 public class NBTEntityDataEntry implements EntityDataEntry {
 
     private final NBTTagCompound compoundTag;
+    private final boolean owned;
 
     public NBTEntityDataEntry(LivingEntity livingEntity) {
         this.compoundTag = new NBTTagCompound();
         ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity, this.compoundTag);
+        this.owned = false;
     }
 
     public NBTEntityDataEntry(NBTTagCompound compoundTag) {
+        this(compoundTag, false);
+    }
+
+    /**
+     * @param compoundTag The tag to build entities out of
+     * @param owned true if this entry may edit the given tag in place instead of copying it first.
+     *              Only safe for tags built for this entry alone and referenced nowhere else.
+     */
+    public NBTEntityDataEntry(NBTTagCompound compoundTag, boolean owned) {
         this.compoundTag = compoundTag;
+        this.owned = owned;
     }
 
     public NBTTagCompound get() {
@@ -46,7 +58,9 @@ public class NBTEntityDataEntry implements EntityDataEntry {
     public LivingEntity createEntity(Location location, boolean addToWorld, EntityType entityType) {
         try {
             NMSHandlerImpl nmsHandler = (NMSHandlerImpl) NMSAdapter.getHandler();
-            NBTTagCompound nbt = this.compoundTag.clone();
+            // rebuild() already hands back a freshly merged tag that nothing else references,
+            // so copying the entire entity tag a second time here is pure waste
+            NBTTagCompound nbt = this.owned ? this.compoundTag : this.compoundTag.clone();
 
             NBTTagList positionTagList = nbt.getList("Pos", 6);
             if (positionTagList == null)
@@ -61,7 +75,7 @@ public class NBTEntityDataEntry implements EntityDataEntry {
             this.setTag(rotationTagList, 0, NBTTagFloat.a(location.getYaw()));
             this.setTag(rotationTagList, 1, NBTTagFloat.a(location.getPitch()));
             nbt.set("Rotation", rotationTagList);
-            nbt.a("UUID", UUID.randomUUID()); // Reset the UUID to resolve possible duplicates
+            nbt.a("UUID", ExtraUtils.insecureRandomUuid()); // Reset the UUID to resolve possible duplicates
 
             Optional<EntityTypes<?>> optionalEntity = EntityTypes.a(entityType.getKey().getKey());
             if (optionalEntity.isPresent()) {

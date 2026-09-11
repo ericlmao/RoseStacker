@@ -3,6 +3,7 @@ package dev.rosewood.rosestacker.listener;
 import dev.rosewood.rosegarden.RosePlugin;
 import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.manager.StackManager;
+import dev.rosewood.rosestacker.spawning.NearbyPlayerSnapshot;
 import dev.rosewood.rosestacker.stack.StackingThread;
 import dev.rosewood.rosestacker.utils.PersistentDataUtils;
 import dev.rosewood.rosestacker.utils.ThreadUtils;
@@ -82,6 +83,7 @@ public class WorldListener implements Listener {
     @EventHandler
     public void onWorldUnload(WorldUnloadEvent event) {
         this.stackManager.unloadWorld(event.getWorld());
+        NearbyPlayerSnapshot.forget(event.getWorld());
     }
 
     @EventHandler

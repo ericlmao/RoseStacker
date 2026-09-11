@@ -1,7 +1,6 @@
 package dev.rosewood.rosestacker.nms.v1_16_R3;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.nms.NMSHandler;
 import dev.rosewood.rosestacker.nms.hologram.Hologram;
@@ -98,6 +97,11 @@ import sun.misc.Unsafe;
 
 @SuppressWarnings("unchecked")
 public class NMSHandlerImpl implements NMSHandler {
+
+    // Hoisted out of the send path. These are the vanilla Entity data watcher objects for custom name and
+    // custom name visibility, and a fresh pair was allocated for every nametag packet sent to every player.
+    private static final DataWatcherObject<Optional<IChatBaseComponent>> DATA_CUSTOM_NAME = DataWatcherRegistry.f.a(2);
+    private static final DataWatcherObject<Boolean> DATA_CUSTOM_NAME_VISIBLE = DataWatcherRegistry.i.a(3);
 
     private static Method method_WorldServer_registerEntity; // Method to register an entity into a world
 
@@ -247,10 +251,10 @@ public class NMSHandlerImpl implements NMSHandler {
     @Override
     public void updateEntityNameTagForPlayer(Player player, org.bukkit.entity.Entity entity, String customName, boolean customNameVisible) {
         try {
-            List<DataWatcher.Item<?>> dataWatchers = new ArrayList<>();
             Optional<IChatBaseComponent> nameComponent = Optional.ofNullable(CraftChatMessage.fromStringOrNull(customName));
-            dataWatchers.add(new DataWatcher.Item<>(DataWatcherRegistry.f.a(2), nameComponent));
-            dataWatchers.add(new DataWatcher.Item<>(DataWatcherRegistry.i.a(3), customNameVisible));
+            List<DataWatcher.Item<?>> dataWatchers = List.of(
+                    new DataWatcher.Item<>(DATA_CUSTOM_NAME, nameComponent),
+                    new DataWatcher.Item<>(DATA_CUSTOM_NAME_VISIBLE, customNameVisible));
 
             PacketPlayOutEntityMetadata packetPlayOutEntityMetadata = new PacketPlayOutEntityMetadata(entity.getEntityId(), new DataWatcherWrapper(dataWatchers), false);
             ((CraftPlayer) player).getHandle().playerConnection.sendPacket(packetPlayOutEntityMetadata);
@@ -262,7 +266,7 @@ public class NMSHandlerImpl implements NMSHandler {
     @Override
     public void updateEntityNameTagVisibilityForPlayer(Player player, org.bukkit.entity.Entity entity, boolean customNameVisible) {
         try {
-            List<DataWatcher.Item<?>> dataItems = Lists.newArrayList(new DataWatcher.Item<>(DataWatcherRegistry.i.a(3), customNameVisible));
+            List<DataWatcher.Item<?>> dataItems = List.of(new DataWatcher.Item<>(DATA_CUSTOM_NAME_VISIBLE, customNameVisible));
             PacketPlayOutEntityMetadata packetPlayOutEntityMetadata = new PacketPlayOutEntityMetadata(entity.getEntityId(), new DataWatcherWrapper(dataItems), false);
             ((CraftPlayer) player).getHandle().playerConnection.sendPacket(packetPlayOutEntityMetadata);
         } catch (Exception e) {

@@ -2,9 +2,9 @@ package dev.rosewood.rosestacker.nms.storage;
 
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Queue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.bukkit.entity.LivingEntity;
@@ -87,6 +87,35 @@ public abstract class StackedEntityDataStorage {
     public abstract List<EntityDataEntry> pop(int amount);
 
     /**
+     * Reports whether the entry at the front of this storage carries no data that any stack condition could
+     * compare differently from the head entity itself. When true, callers may compare the stack against its
+     * own head entity instead of materializing the entry into a throwaway entity.
+     * <p>
+     * The answer is about the stored entry only. It says nothing about the head entity, which is free to
+     * drift away from the data the entries are stored against while it is alive: a baby grows up, a sheep
+     * regrows its wool, a player tames an animal. Once that happens the head is no longer a stand-in for the
+     * entries and the comparison is no longer equivalent to the real one, so callers must bound how long
+     * they are willing to keep taking the shortcut. {@link dev.rosewood.rosestacker.stack.StackedEntity}
+     * does that with a per-stack cycle counter plus the age guard {@link #getBaseAdultState()} supports.
+     *
+     * @return true if the front entry is representable by the head entity, false otherwise
+     */
+    public boolean isHeadRepresentative() {
+        return false;
+    }
+
+    /**
+     * Reports the adult state that the entries in this storage are stored against, which lets callers spot
+     * the most common way a live head entity drifts away from them without materializing anything.
+     *
+     * @return true if the stored entries are adults, false if they are babies, or null if this storage
+     *         cannot tell (it keeps no per-entry data, or the entries carry no age at all)
+     */
+    public Boolean getBaseAdultState() {
+        return null;
+    }
+
+    /**
      * @return the number of entries
      */
     public abstract int size();
@@ -151,13 +180,35 @@ public abstract class StackedEntityDataStorage {
     public abstract List<LivingEntity> removeIf(Function<LivingEntity, Boolean> function);
 
     /**
-     * Creates a backing queue to be used for the storage
+     * Applies an amount of damage to every entry in this storage and removes the entries that do not survive
+     * it. The default implementation materializes every entry as an entity to read and write its health;
+     * storages that keep health in their own format are expected to edit it in place and only materialize the
+     * entries that died, which the loot code needs real entities for.
+     *
+     * @param damage The amount of damage to apply to each entry
+     * @return a list of the entries that died, materialized as entities
+     */
+    public List<LivingEntity> damageAll(double damage) {
+        return this.removeIf(entity -> {
+            if (entity.getHealth() - damage <= 0)
+                return true; // Don't set the health below 0, as that will trigger the death event which we want to avoid
+
+            entity.setHealth(entity.getHealth() - damage);
+            return false;
+        });
+    }
+
+    /**
+     * Creates a backing queue to be used for the storage. The returned queue is not thread safe on its own;
+     * implementations are expected to guard every access to it with a lock of their own. The bulk operations
+     * already did exactly that, so the queue's internal locking was a second, redundant acquisition on top of
+     * an ArrayList copy, plus a node allocation for every entry.
      *
      * @return the backing queue
      * @param <T> the type of the queue
      */
     public static <T> Queue<T> createBackingQueue() {
-        return new LinkedBlockingQueue<>();
+        return new ArrayDeque<>();
     }
 
 }
