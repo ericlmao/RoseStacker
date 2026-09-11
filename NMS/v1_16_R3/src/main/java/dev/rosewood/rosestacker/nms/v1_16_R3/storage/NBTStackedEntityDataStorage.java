@@ -120,12 +120,12 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     @Override
     public NBTEntityDataEntry peek() {
-        return new NBTEntityDataEntry(this.rebuild(this.data.element()));
+        return new NBTEntityDataEntry(this.rebuild(this.data.element()), true);
     }
 
     @Override
     public NBTEntityDataEntry pop() {
-        return new NBTEntityDataEntry(this.rebuild(this.data.remove()));
+        return new NBTEntityDataEntry(this.rebuild(this.data.remove()), true);
     }
 
     @Override
@@ -134,7 +134,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
         List<EntityDataEntry> popped = new ArrayList<>(amount);
         for (int i = 0; i < amount; i++)
-            popped.add(new NBTEntityDataEntry(this.rebuild(this.data.remove())));
+            popped.add(new NBTEntityDataEntry(this.rebuild(this.data.remove()), true));
         return popped;
     }
 
@@ -170,7 +170,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
     public List<EntityDataEntry> getAll() {
         List<EntityDataEntry> wrapped = new ArrayList<>(this.data.size());
         for (NBTTagCompound compoundTag : new ArrayList<>(this.data))
-            wrapped.add(new NBTEntityDataEntry(this.rebuild(compoundTag)));
+            wrapped.add(new NBTEntityDataEntry(this.rebuild(compoundTag), true));
         return wrapped;
     }
 
@@ -214,7 +214,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         Iterator<NBTTagCompound> iterator = this.data.iterator();
         for (int i = 0; i < count; i++) {
             NBTTagCompound compoundTag = iterator.next();
-            LivingEntity entity = new NBTEntityDataEntry(this.rebuild(compoundTag)).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
+            LivingEntity entity = new NBTEntityDataEntry(this.rebuild(compoundTag), true).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
             consumer.accept(entity);
         }
     }
@@ -230,7 +230,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
             ListIterator<NBTTagCompound> dataIterator = data.listIterator();
             while (dataIterator.hasNext()) {
                 NBTTagCompound compoundTag = dataIterator.next();
-                LivingEntity entity = new NBTEntityDataEntry(this.rebuild(compoundTag)).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
+                LivingEntity entity = new NBTEntityDataEntry(this.rebuild(compoundTag), true).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
                 if (function.apply(entity)) {
                     NBTTagCompound replacementTag = new NBTTagCompound();
                     ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(entity, replacementTag);
@@ -258,7 +258,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
             ListIterator<NBTTagCompound> dataIterator = data.listIterator();
             while (dataIterator.hasNext()) {
                 NBTTagCompound compoundTag = dataIterator.next();
-                LivingEntity entity = new NBTEntityDataEntry(this.rebuild(compoundTag)).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
+                LivingEntity entity = new NBTEntityDataEntry(this.rebuild(compoundTag), true).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
                 if (function.apply(entity)) {
                     removedEntries.add(entity);
                     dataIterator.remove();
