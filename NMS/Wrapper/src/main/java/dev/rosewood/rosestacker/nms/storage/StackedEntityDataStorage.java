@@ -87,6 +87,17 @@ public abstract class StackedEntityDataStorage {
     public abstract List<EntityDataEntry> pop(int amount);
 
     /**
+     * Reports whether the entry at the front of this storage carries no data that any stack condition could
+     * compare differently from the head entity itself. When true, callers may compare the stack against its
+     * own head entity instead of materializing the entry into a throwaway entity.
+     *
+     * @return true if the front entry is representable by the head entity, false otherwise
+     */
+    public boolean isHeadRepresentative() {
+        return false;
+    }
+
+    /**
      * @return the number of entries
      */
     public abstract int size();
