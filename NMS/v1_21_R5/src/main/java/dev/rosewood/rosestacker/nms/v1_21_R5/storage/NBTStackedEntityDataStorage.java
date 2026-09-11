@@ -32,7 +32,12 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
     // size 1, and roughly 99% of stacks never do. The spawner path used to pay for it twice per mob: once
     // saving the mob into its own throwaway storage and again saving it into the stack it merged into.
     private volatile CompoundTag base;
+    // Guarded by itself. Every bulk operation already took this lock and copied the contents into an
+    // ArrayList, so the backing queue's own locking was redundant; an ArrayDeque under the same lock drops
+    // both the second lock acquisition and the node allocation per entry.
     private final Queue<CompoundTag> data;
+    // Mirrors data.size() so size() stays a plain field read. Only written while holding the data lock.
+    private volatile int size;
 
     public NBTStackedEntityDataStorage(LivingEntity livingEntity) {
         super(StackedEntityDataStorageType.NBT, livingEntity);
@@ -50,6 +55,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
             this.data = createBackingQueue();
             for (int i = 0; i < length; i++)
                 this.data.add(this.migrate(migrations, NbtIo.read(dataInput)));
+            this.size = this.data.size();
         } catch (Exception e) {
             throw new StackedEntityDataIOException(e);
         }
@@ -101,59 +107,94 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         CompoundTag compoundTag = ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(entity);
         this.stripUnneeded(compoundTag);
         this.removeDuplicates(compoundTag);
-        this.data.add(compoundTag);
+        synchronized (this.data) {
+            this.data.add(compoundTag);
+            this.size = this.data.size();
+        }
     }
 
     @Override
     public void addAll(StackedEntityDataStorage stackedEntityDataStorage) {
-        stackedEntityDataStorage.getAll().forEach(entry -> {
+        List<EntityDataEntry> entries = stackedEntityDataStorage.getAll();
+        List<CompoundTag> compoundTags = new ArrayList<>(entries.size());
+        for (EntityDataEntry entry : entries) {
             CompoundTag compoundTag = ((NBTEntityDataEntry) entry).get();
             this.stripUnneeded(compoundTag);
             this.removeDuplicates(compoundTag);
-            this.data.add(compoundTag);
-        });
+            compoundTags.add(compoundTag);
+        }
+
+        synchronized (this.data) {
+            this.data.addAll(compoundTags);
+            this.size = this.data.size();
+        }
     }
 
     @Override
     public void addClones(int amount) {
         CompoundTag base = this.getBase();
-        for (int i = 0; i < amount; i++)
-            this.data.add(base.copy());
+        synchronized (this.data) {
+            for (int i = 0; i < amount; i++)
+                this.data.add(base.copy());
+            this.size = this.data.size();
+        }
     }
 
     @Override
     public NBTEntityDataEntry peek() {
-        return new NBTEntityDataEntry(this.rebuild(this.data.element()), true);
+        CompoundTag front;
+        synchronized (this.data) {
+            front = this.data.element();
+        }
+
+        return new NBTEntityDataEntry(this.rebuild(front), true);
     }
 
     @Override
     public NBTEntityDataEntry pop() {
-        return new NBTEntityDataEntry(this.rebuild(this.data.remove()), true);
+        CompoundTag front;
+        synchronized (this.data) {
+            front = this.data.remove();
+            this.size = this.data.size();
+        }
+
+        return new NBTEntityDataEntry(this.rebuild(front), true);
     }
 
     @Override
     public List<EntityDataEntry> pop(int amount) {
-        amount = Math.min(amount, this.data.size());
+        List<CompoundTag> removed;
+        synchronized (this.data) {
+            amount = Math.min(amount, this.data.size());
+            removed = new ArrayList<>(amount);
+            for (int i = 0; i < amount; i++)
+                removed.add(this.data.remove());
+            this.size = this.data.size();
+        }
 
-        List<EntityDataEntry> popped = new ArrayList<>(amount);
-        for (int i = 0; i < amount; i++)
-            popped.add(new NBTEntityDataEntry(this.rebuild(this.data.remove()), true));
+        List<EntityDataEntry> popped = new ArrayList<>(removed.size());
+        for (CompoundTag compoundTag : removed)
+            popped.add(new NBTEntityDataEntry(this.rebuild(compoundTag), true));
         return popped;
     }
 
     @Override
     public int size() {
-        return this.data.size();
+        return this.size;
     }
 
     @Override
     public boolean isEmpty() {
-        return this.data.isEmpty();
+        return this.size == 0;
     }
 
     @Override
     public boolean isHeadRepresentative() {
-        CompoundTag front = this.data.peek();
+        CompoundTag front;
+        synchronized (this.data) {
+            front = this.data.peek();
+        }
+
         if (front == null)
             return true;
 
@@ -171,22 +212,30 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     @Override
     public List<EntityDataEntry> getAll() {
-        List<EntityDataEntry> wrapped = new ArrayList<>(this.data.size());
-        for (CompoundTag compoundTag : new ArrayList<>(this.data))
+        List<CompoundTag> snapshot;
+        synchronized (this.data) {
+            snapshot = new ArrayList<>(this.data);
+        }
+
+        List<EntityDataEntry> wrapped = new ArrayList<>(snapshot.size());
+        for (CompoundTag compoundTag : snapshot)
             wrapped.add(new NBTEntityDataEntry(this.rebuild(compoundTag), true));
         return wrapped;
     }
 
     @Override
     public byte[] serialize(int maxAmount) {
-        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-             ObjectOutputStream dataOutput = new ObjectOutputStream(outputStream)) {
-
+        List<CompoundTag> tagsToSave;
+        synchronized (this.data) {
             int targetAmount = Math.min(maxAmount, this.data.size());
-            List<CompoundTag> tagsToSave = new ArrayList<>(targetAmount);
+            tagsToSave = new ArrayList<>(targetAmount);
             Iterator<CompoundTag> iterator = this.data.iterator();
             for (int i = 0; i < targetAmount; i++)
                 tagsToSave.add(iterator.next());
+        }
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+             ObjectOutputStream dataOutput = new ObjectOutputStream(outputStream)) {
 
             NbtIo.write(this.getBase(), dataOutput);
             dataOutput.writeInt(tagsToSave.size());
@@ -207,16 +256,22 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     @Override
     public void forEachCapped(int count, Consumer<LivingEntity> consumer) {
-        if (count > this.data.size())
-            count = this.data.size();
-
         LivingEntity thisEntity = this.entity.get();
         if (thisEntity == null)
             return;
 
-        Iterator<CompoundTag> iterator = this.data.iterator();
-        for (int i = 0; i < count; i++) {
-            CompoundTag compoundTag = iterator.next();
+        List<CompoundTag> snapshot;
+        synchronized (this.data) {
+            if (count > this.data.size())
+                count = this.data.size();
+
+            snapshot = new ArrayList<>(count);
+            Iterator<CompoundTag> iterator = this.data.iterator();
+            for (int i = 0; i < count; i++)
+                snapshot.add(iterator.next());
+        }
+
+        for (CompoundTag compoundTag : snapshot) {
             LivingEntity entity = new NBTEntityDataEntry(this.rebuild(compoundTag), true).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
             consumer.accept(entity);
         }
@@ -249,7 +304,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     @Override
     public List<LivingEntity> removeIf(Function<LivingEntity, Boolean> function) {
-        List<LivingEntity> removedEntries = new ArrayList<>(this.data.size());
+        List<LivingEntity> removedEntries = new ArrayList<>(this.size);
         LivingEntity thisEntity = this.entity.get();
         if (thisEntity == null)
             return removedEntries;
@@ -273,6 +328,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
             this.data.clear();
             this.data.addAll(data);
+            this.size = this.data.size();
             return removedEntries;
         }
     }

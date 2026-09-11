@@ -2,9 +2,9 @@ package dev.rosewood.rosestacker.nms.storage;
 
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Queue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.bukkit.entity.LivingEntity;
@@ -162,13 +162,16 @@ public abstract class StackedEntityDataStorage {
     public abstract List<LivingEntity> removeIf(Function<LivingEntity, Boolean> function);
 
     /**
-     * Creates a backing queue to be used for the storage
+     * Creates a backing queue to be used for the storage. The returned queue is not thread safe on its own;
+     * implementations are expected to guard every access to it with a lock of their own. The bulk operations
+     * already did exactly that, so the queue's internal locking was a second, redundant acquisition on top of
+     * an ArrayList copy, plus a node allocation for every entry.
      *
      * @return the backing queue
      * @param <T> the type of the queue
      */
     public static <T> Queue<T> createBackingQueue() {
-        return new LinkedBlockingQueue<>();
+        return new ArrayDeque<>();
     }
 
 }
