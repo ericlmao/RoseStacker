@@ -28,6 +28,13 @@ import org.bukkit.entity.Player;
 
 public class StackedSpawner extends Stack<SpawnerStackSettings> {
 
+    /**
+     * How many known-good spawn offsets are remembered per spawner. Mob farms are static, so the offsets
+     * that produced a valid spawn location last cycle nearly always work again; sized to cover the most
+     * spawn locations a single spawn cycle asks for before it has to sample randomly.
+     */
+    public static final int MAX_CACHED_SPAWN_OFFSETS = 16;
+
     private int size;
     private StackedSpawnerTile spawnerTile;
     private CreatureSpawner cachedCreatureSpawner;
@@ -40,6 +47,8 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
     private List<String> lastDisplayStrings;
     private Location hologramLocation;
     private double hologramLocationOffset;
+    private long[] cachedSpawnOffsets;
+    private int cachedSpawnOffsetCount;
 
     public StackedSpawner(int size, Block spawner, boolean placedByPlayer, boolean updateDisplay) {
         if (spawner.getType() != Material.SPAWNER)
@@ -234,6 +243,44 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
             this.hologramLocation = hologramLocation;
         }
         return hologramLocation;
+    }
+
+    /**
+     * @return how many packed spawn offsets are currently cached for this spawner
+     */
+    public int getCachedSpawnOffsetCount() {
+        return this.cachedSpawnOffsetCount;
+    }
+
+    /**
+     * Gets a cached spawn offset. The value is opaque here; the spawning method owns the packing.
+     *
+     * @param index The index of the offset, must be less than {@link #getCachedSpawnOffsetCount}
+     * @return the packed spawn offset at the index
+     */
+    public long getCachedSpawnOffset(int index) {
+        return this.cachedSpawnOffsets[index];
+    }
+
+    /**
+     * Replaces the cached spawn offsets with the first entries of a buffer. The buffer is copied, so the
+     * caller is free to keep reusing it.
+     *
+     * @param offsets The buffer of packed offsets to cache
+     * @param count How many entries of the buffer to keep, at most {@link #MAX_CACHED_SPAWN_OFFSETS}
+     */
+    public void setCachedSpawnOffsets(long[] offsets, int count) {
+        count = Math.min(count, MAX_CACHED_SPAWN_OFFSETS);
+        if (count <= 0) {
+            this.cachedSpawnOffsetCount = 0;
+            return;
+        }
+
+        if (this.cachedSpawnOffsets == null)
+            this.cachedSpawnOffsets = new long[MAX_CACHED_SPAWN_OFFSETS];
+
+        System.arraycopy(offsets, 0, this.cachedSpawnOffsets, 0, count);
+        this.cachedSpawnOffsetCount = count;
     }
 
     @Override

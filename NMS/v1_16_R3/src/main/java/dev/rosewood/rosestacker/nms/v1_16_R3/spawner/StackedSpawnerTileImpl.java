@@ -28,6 +28,8 @@ public class StackedSpawnerTileImpl extends MobSpawnerAbstract implements Stacke
     private Object cachedMobs;
     private Object cachedSpawnData;
     private SpawnerType cachedSpawnerType;
+    private Object cachedSpawningMethodData;
+    private MobSpawningMethod cachedSpawningMethod;
 
     private final TileEntityMobSpawner blockEntity;
     private final BlockPosition blockPos;
@@ -108,14 +110,26 @@ public class StackedSpawnerTileImpl extends MobSpawnerAbstract implements Stacke
 
     private void trySpawns(boolean onlyCheckConditions) {
         try {
-            if (this.spawnData != null) {
+            if (this.spawnData == null)
+                return;
+
+            // The spawn data is replaced wholesale rather than mutated, so an identity check on it is
+            // enough to know the parsed entity type is still current. This used to parse a NamespacedKey
+            // on every spawn, and allocate a MobSpawningMethod (and with it a Random) along with it; the
+            // spawning method is kept instead, it caches per-spawner scratch state between spawns.
+            if (this.cachedSpawningMethodData != this.spawnData) {
+                this.cachedSpawningMethodData = this.spawnData;
                 String typeId = this.spawnData.getEntity().getString("id");
-                if (!typeId.isEmpty()) {
-                    EntityType entityType = ExtraUtils.getEntityTypeFromKey(NamespacedKey.fromString(typeId));
-                    if (entityType != null)
-                        new MobSpawningMethod(entityType).spawn(this.stackedSpawner, onlyCheckConditions);
+                EntityType entityType = typeId.isEmpty() ? null : ExtraUtils.getEntityTypeFromKey(NamespacedKey.fromString(typeId));
+                if (entityType == null) {
+                    this.cachedSpawningMethod = null;
+                } else if (this.cachedSpawningMethod == null || this.cachedSpawningMethod.getEntityType() != entityType) {
+                    this.cachedSpawningMethod = new MobSpawningMethod(entityType);
                 }
             }
+
+            if (this.cachedSpawningMethod != null)
+                this.cachedSpawningMethod.spawn(this.stackedSpawner, onlyCheckConditions);
         } catch (Exception e) {
             e.printStackTrace();
         }
