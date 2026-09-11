@@ -147,6 +147,24 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
     }
 
     @Override
+    public boolean isHeadRepresentative() {
+        CompoundTag front = this.data.peek();
+        if (front == null)
+            return true;
+
+        // Entries are stored deduplicated against the base, and the base already has every UNSAFE_NBT_KEYS
+        // entry stripped from it. So anything the front entry still carries that is itself an unsafe key
+        // (health, equipment, attributes, brain, ...) is a field no stack condition ever looks at, and the
+        // head entity is an equally good stand-in for it. A spawner clone or an identical mob leaves nothing
+        // else behind, which on a spawner-fed farm is very nearly every stack.
+        for (String key : front.getAllKeys())
+            if (!NMSHandler.UNSAFE_NBT_KEY_SET.contains(key))
+                return false;
+
+        return true;
+    }
+
+    @Override
     public List<EntityDataEntry> getAll() {
         List<EntityDataEntry> wrapped = new ArrayList<>(this.data.size());
         for (CompoundTag compoundTag : new ArrayList<>(this.data))

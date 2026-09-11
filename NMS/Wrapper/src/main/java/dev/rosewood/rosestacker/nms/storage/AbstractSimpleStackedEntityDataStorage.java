@@ -81,6 +81,12 @@ public abstract class AbstractSimpleStackedEntityDataStorage extends StackedEnti
     }
 
     @Override
+    public boolean isHeadRepresentative() {
+        // Every entry is a stripped copy of the head entity itself, so the head always represents the front
+        return true;
+    }
+
+    @Override
     public List<EntityDataEntry> getAll() {
         EntityDataEntry[] entries = new EntityDataEntry[this.size];
         Arrays.fill(entries, this.copy());

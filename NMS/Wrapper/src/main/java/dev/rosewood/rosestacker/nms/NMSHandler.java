@@ -61,6 +61,12 @@ public interface NMSHandler {
     );
 
     /**
+     * The same keys as {@link #UNSAFE_NBT_KEYS}, as a set. Used by the storages to test entry key sets on the
+     * unstack path, where a linear scan of the list would run once per key per stack per cycle.
+     */
+    Set<String> UNSAFE_NBT_KEY_SET = Set.copyOf(UNSAFE_NBT_KEYS);
+
+    /**
      * Creates a LivingEntity instance where the actual entity has not been added to the world.
      * To be used in conjunction with {@link #spawnExistingEntity(LivingEntity, SpawnReason, boolean)}
      *
