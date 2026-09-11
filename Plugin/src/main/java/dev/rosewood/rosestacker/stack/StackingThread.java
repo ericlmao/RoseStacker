@@ -494,6 +494,8 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         if (snapshots.isEmpty())
             return;
 
+        this.noteTrackEventAvailability();
+
         this.updatingNametags = true;
         try {
             // Loop stacks in the outer loop so per-stack work (entity location, display name) is
@@ -523,6 +525,45 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         this.nametagPlayerSnapshots.put(playerId, new PlayerNametagSnapshot(player, player.getLocation(), holdingStackingTool));
     }
 
+    private static final int TRACK_EVENT_GRACE_TICKS = 20 * 30;
+    private static volatile boolean loggedMissingTrackEvents;
+    private long nametagPassesWithPlayers;
+
+    /**
+     * Logs once, after players have been online for a while without a single track event arriving, that
+     * the display passes are running in their fallback mode, so the difference in packet volume is
+     * explainable from the log rather than a mystery.
+     */
+    private void noteTrackEventAvailability() {
+        if (loggedMissingTrackEvents || !StackedEntity.isAsyncDisplayUpdates() || StackedEntity.areTrackEventsObserved())
+            return;
+
+        this.nametagPassesWithPlayers++;
+        if (this.nametagPassesWithPlayers * SettingKey.NAMETAG_UPDATE_FREQUENCY.get() < TRACK_EVENT_GRACE_TICKS)
+            return;
+
+        loggedMissingTrackEvents = true;
+        this.rosePlugin.getLogger().info("No PlayerTrackEntityEvent has been observed with players online; this server's entity tracker "
+                + "does not appear to fire Paper's track events. Stack nametags are being sent to every nearby player and "
+                + "resent each cycle instead of only to tracking players. This is only a performance note.");
+    }
+
+    /**
+     * Picks who the async display path should send to. Once the server has proven it fires the track events
+     * the tracked set is exact; before that (or on a server that never fires them) the set may be empty for
+     * every stack, so every nearby player is a recipient. Sending to a client that does not have the entity
+     * is harmless: the client drops metadata for unknown entity ids.
+     *
+     * @param tracking The stack's tracked player set
+     * @return the recipient filter, or null if there is nobody to send to
+     */
+    private static Predicate<Player> recipientFilter(Set<UUID> tracking) {
+        if (!StackedEntity.areTrackEventsObserved())
+            return player -> true;
+
+        return player -> tracking.contains(player.getUniqueId());
+    }
+
     private void processEntityNametags(List<PlayerNametagSnapshot> snapshots, StackedEntity stackedEntity, boolean asyncDisplayUpdates) {
         LivingEntity entity = stackedEntity.getEntity();
         if (entity == null)
@@ -542,10 +583,10 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                 return;
 
             Set<UUID> tracking = stackedEntity.getTrackingPlayers();
-            if (tracking.isEmpty())
+            if (tracking.isEmpty() && StackedEntity.areTrackEventsObserved())
                 return;
 
-            this.updateEntityNametags(stackedEntity, entity, nearby, player -> tracking.contains(player.getUniqueId()), true);
+            this.updateEntityNametags(stackedEntity, entity, nearby, recipientFilter(tracking), true);
             return;
         }
 
@@ -655,10 +696,10 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                 return;
 
             Set<UUID> tracking = stackedItem.getTrackingPlayers();
-            if (tracking.isEmpty())
+            if (tracking.isEmpty() && StackedEntity.areTrackEventsObserved())
                 return;
 
-            this.updateItemNametags(item, nearby, player -> tracking.contains(player.getUniqueId()), true);
+            this.updateItemNametags(item, nearby, recipientFilter(tracking), true);
             return;
         }
 

@@ -44,6 +44,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Statistic;
+import org.bukkit.World;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Ageable;
 import org.bukkit.entity.Animals;
@@ -174,6 +175,32 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
      */
     public static boolean isAsyncDisplayUpdates() {
         return asyncDisplayUpdates && nametagStateTrackingEnabled;
+    }
+
+    /**
+     * Whether a track or untrack event has ever reached us on this server.
+     * <p>
+     * The events exist on Paper, but a fork that replaces the entity tracker (async trackers in particular)
+     * can ship the event classes without ever firing them. Registering the listener is therefore not proof
+     * that the tracked player sets will be filled, and a set that is never filled would mean no nametag is
+     * ever sent. Until the first event arrives the display passes fall back to sending to every nearby
+     * player and resending each cycle, which is what the plugin did before it tracked per-player state.
+     */
+    private static volatile boolean trackEventsObserved;
+
+    /**
+     * Records that the server does fire the track/untrack events, called by the tracking listener.
+     */
+    public static void markTrackEventsObserved() {
+        if (!trackEventsObserved)
+            trackEventsObserved = true;
+    }
+
+    /**
+     * @return true if the tracked player sets can be relied on, false if they may be permanently empty
+     */
+    public static boolean areTrackEventsObserved() {
+        return trackEventsObserved;
     }
 
     private EntityStackSettings stackSettings;
@@ -910,6 +937,24 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         // correct tag from the nametag pass once they start tracking it. This replaces a loop over every
         // online player that scheduled a task per player just to distance-check them.
         if (isAsyncDisplayUpdates()) {
+            if (!trackEventsObserved) {
+                // No track event has ever reached us, so the tracked set may be empty on every stack. Send to
+                // everyone close enough to possibly see the entity instead; a metadata packet for an entity
+                // the client does not have is ignored, so over-sending is harmless.
+                Location location = this.entity.getLocation();
+                World world = location.getWorld();
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (!player.isValid() || player.getWorld() != world)
+                        continue;
+
+                    if (player.getLocation().distanceSquared(location) > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
+                        continue;
+
+                    NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, this.entity, displayName, displayNameVisible);
+                }
+                return;
+            }
+
             for (UUID playerId : this.getTrackingPlayers()) {
                 if (!this.markNametagSent(playerId, displayName, displayNameVisible))
                     continue;
@@ -941,7 +986,9 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
      * @return true if this differs from what the player last received and a packet should be sent
      */
     public boolean markNametagSent(UUID playerId, String displayName, boolean visible) {
-        if (!nametagStateTrackingEnabled)
+        // Without track events nothing ever clears a player's record when their client re-tracks the entity
+        // with vanilla metadata, so the record would hide the tag from them for good; resend instead
+        if (!nametagStateTrackingEnabled || (asyncDisplayUpdates && !trackEventsObserved))
             return true;
 
         NametagState state = this.getNametagState(playerId);
