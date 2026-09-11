@@ -337,6 +337,55 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         }
     }
 
+    @Override
+    public List<LivingEntity> damageAll(double damage) {
+        LivingEntity thisEntity = this.entity.get();
+        if (thisEntity == null)
+            return List.of();
+
+        // Health lives in the stored tag as a plain float, so shared damage can be applied to it directly.
+        // Building an entity per member to read and write its health, and saving every survivor back out
+        // again, cost a createCreature plus a saveWithoutId per member per damage tick.
+        List<CompoundTag> killedTags = new ArrayList<>();
+        synchronized (this.data) {
+            // Entries added by addClones() are exact copies of the base, and the base has every
+            // UNSAFE_NBT_KEYS entry stripped from it, health included, so they carry no health of their own.
+            // One entity built from the base tells us the health they would have had; each of them picks up a
+            // health value of its own below, so this is needed at most once per stack.
+            Float cloneHealth = null;
+            Iterator<CompoundTag> iterator = this.data.iterator();
+            while (iterator.hasNext()) {
+                CompoundTag compoundTag = iterator.next();
+                float health;
+                if (compoundTag.contains("Health")) {
+                    health = compoundTag.getFloatOr("Health", 0F);
+                } else {
+                    if (cloneHealth == null) {
+                        LivingEntity clone = new NBTEntityDataEntry(this.rebuild(new CompoundTag()), true).createEntity(thisEntity.getLocation(), false, thisEntity.getType());
+                        cloneHealth = (float) (clone != null ? clone.getHealth() : thisEntity.getHealth());
+                    }
+                    health = cloneHealth;
+                }
+
+                if (health - damage <= 0) {
+                    // Don't set the health below 0, as that will trigger the death event which we want to avoid
+                    killedTags.add(compoundTag);
+                    iterator.remove();
+                } else {
+                    compoundTag.putFloat("Health", (float) (health - damage));
+                }
+            }
+
+            this.size = this.data.size();
+        }
+
+        // Only the members that actually died need to become entities, the loot code works off real entities
+        List<LivingEntity> killedEntities = new ArrayList<>(killedTags.size());
+        for (CompoundTag compoundTag : killedTags)
+            killedEntities.add(new NBTEntityDataEntry(this.rebuild(compoundTag), true).createEntity(thisEntity.getLocation(), false, thisEntity.getType()));
+        return killedEntities;
+    }
+
     private void removeDuplicates(CompoundTag compoundTag) {
         CompoundTag base = this.getBase();
         for (String key : new ArrayList<>(compoundTag.keySet())) {

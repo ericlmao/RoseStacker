@@ -325,14 +325,9 @@ public class EntityListener implements Listener {
 
         double damage = event.getFinalDamage();
 
-        List<LivingEntity> killedEntities = stackedEntity.getDataStorage().removeIf(internal -> {
-            if (internal.getHealth() - damage <= 0) {
-                return true; // Don't set the health below 0, as that will trigger the death event which we want to avoid
-            } else {
-                internal.setHealth(internal.getHealth() - damage);
-                return false;
-            }
-        });
+        // NBT storage applies this straight to the stored health tags and only builds entities for the members
+        // that died; simple storage falls back to the entity-based path, which it pays nothing extra for
+        List<LivingEntity> killedEntities = stackedEntity.getDataStorage().damageAll(damage);
 
         // Only try dropping loot if something actually died
         if (!killedEntities.isEmpty()) {
