@@ -595,9 +595,10 @@ public class NMSHandlerImpl implements NMSHandler {
         } else {
             ProblemReporter.Collector reporter = new ProblemReporter.Collector();
             TagValueOutput valueOutput = TagValueOutput.createWithContext(reporter, nmsEntity.registryAccess());
+            ((CraftLivingEntity) livingEntity).getHandle().saveWithoutId(valueOutput);
+            // Checked after the save, not before it: nothing can have been reported until the save runs
             if (!reporter.isEmpty())
                 RoseStacker.getInstance().getLogger().severe(reporter.getTreeReport());
-            ((CraftLivingEntity) livingEntity).getHandle().saveWithoutId(valueOutput);
             return valueOutput.buildResult();
         }
     }
