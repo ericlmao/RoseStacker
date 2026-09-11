@@ -18,11 +18,9 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Queue;
 import java.util.Set;
-import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.Tag;
 import org.bukkit.entity.LivingEntity;
@@ -91,7 +89,6 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
                 base = new CompoundTag();
                 ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity, base);
                 this.stripUnneeded(base);
-                this.stripAttributeUuids(base);
                 NMSHandler.UNSAFE_NBT_KEYS.forEach(base::remove);
             }
 
@@ -105,7 +102,6 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         CompoundTag compoundTag = new CompoundTag();
         ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(entity, compoundTag);
         this.stripUnneeded(compoundTag);
-        this.stripAttributeUuids(compoundTag);
         this.removeDuplicates(compoundTag);
         this.data.add(compoundTag);
     }
@@ -115,7 +111,6 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         stackedEntityDataStorage.getAll().forEach(entry -> {
             CompoundTag compoundTag = ((NBTEntityDataEntry) entry).get();
             this.stripUnneeded(compoundTag);
-            this.stripAttributeUuids(compoundTag);
             this.removeDuplicates(compoundTag);
             this.data.add(compoundTag);
         });
@@ -245,7 +240,6 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
                     CompoundTag replacementTag = new CompoundTag();
                     ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(entity, replacementTag);
                     this.stripUnneeded(replacementTag);
-                    this.stripAttributeUuids(replacementTag);
                     this.removeDuplicates(replacementTag);
                     dataIterator.set(replacementTag);
                 }
@@ -276,7 +270,6 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
                     CompoundTag replacementTag = new CompoundTag();
                     ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(entity, replacementTag);
                     this.stripUnneeded(replacementTag);
-                    this.stripAttributeUuids(replacementTag);
                     this.removeDuplicates(replacementTag);
                     dataIterator.set(replacementTag);
                 }
@@ -302,7 +295,6 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         CompoundTag merged = new CompoundTag();
         merged.merge(this.getBase());
         merged.merge(compoundTag);
-        this.fillAttributeUuids(merged);
         return merged;
     }
 
@@ -310,39 +302,6 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         NMSHandler.REMOVABLE_NBT_KEYS.forEach(compoundTag::remove);
         CompoundTag bukkitValues = compoundTag.getCompound("BukkitValues");
         bukkitValues.remove("rosestacker:stacked_entity_data");
-    }
-
-    private void stripAttributeUuids(CompoundTag compoundTag) {
-        ListTag attributes = compoundTag.getList("Attributes", Tag.TAG_COMPOUND);
-        for (int i = 0; i < attributes.size(); i++) {
-            CompoundTag attribute = attributes.getCompound(i);
-            attribute.remove("UUID");
-            ListTag modifiers = attribute.getList("Modifiers", Tag.TAG_COMPOUND);
-            for (int j = 0; j < modifiers.size(); j++) {
-                CompoundTag modifier = modifiers.getCompound(j);
-                if (modifier.getString("Name").equals("Random spawn bonus")) {
-                    modifiers.remove(j);
-                    j--;
-                } else {
-                    modifier.remove("UUID");
-                }
-            }
-        }
-    }
-
-    private void fillAttributeUuids(CompoundTag compoundTag) {
-        ListTag attributes = compoundTag.getList("Attributes", Tag.TAG_COMPOUND);
-        for (int i = 0; i < attributes.size(); i++) {
-            CompoundTag attribute = attributes.getCompound(i);
-            attribute.putUUID("UUID", UUID.randomUUID());
-            ListTag modifiers = attribute.getList("Modifiers", Tag.TAG_COMPOUND);
-            for (int j = 0; j < modifiers.size(); j++) {
-                CompoundTag modifier = modifiers.getCompound(j);
-                modifier.putUUID("UUID", UUID.randomUUID());
-            }
-            if (modifiers.size() == 0)
-                attribute.remove("Modifiers");
-        }
     }
 
 }

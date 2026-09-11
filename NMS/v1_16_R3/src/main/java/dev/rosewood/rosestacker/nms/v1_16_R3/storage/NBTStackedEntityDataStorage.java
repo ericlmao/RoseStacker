@@ -6,6 +6,7 @@ import dev.rosewood.rosestacker.nms.storage.EntityDataEntry;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataIOException;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorage;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorageType;
+import dev.rosewood.rosestacker.nms.util.ExtraUtils;
 import dev.rosewood.rosestacker.nms.v1_16_R3.NMSHandlerImpl;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -18,7 +19,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Queue;
-import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import net.minecraft.server.v1_16_R3.NBTBase;
@@ -324,11 +324,11 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         NBTTagList attributes = compoundTag.getList("Attributes", 10);
         for (int i = 0; i < attributes.size(); i++) {
             NBTTagCompound attribute = attributes.getCompound(i);
-            attribute.a("UUID", UUID.randomUUID());
+            attribute.a("UUID", ExtraUtils.insecureRandomUuid());
             NBTTagList modifiers = attribute.getList("Modifiers", 10);
             for (int j = 0; j < modifiers.size(); j++) {
                 NBTTagCompound modifier = modifiers.getCompound(j);
-                modifier.a("UUID", UUID.randomUUID());
+                modifier.a("UUID", ExtraUtils.insecureRandomUuid());
             }
             if (modifiers.size() == 0)
                 attribute.remove("Modifiers");
