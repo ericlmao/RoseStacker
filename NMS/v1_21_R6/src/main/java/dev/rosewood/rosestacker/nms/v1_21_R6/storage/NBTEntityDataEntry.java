@@ -90,10 +90,9 @@ public class NBTEntityDataEntry implements EntityDataEntry {
                 // Load NBT
                 ProblemReporter.Collector reporter = new ProblemReporter.Collector();
                 ValueInput valueInput = TagValueInput.create(reporter, entity.registryAccess(), nbt);
+                entity.load(valueInput);
                 if (!reporter.isEmpty())
                     RoseStacker.getInstance().getLogger().severe(reporter.getTreeReport());
-
-                entity.load(valueInput);
 
                 if (entity instanceof Villager villager)
                     villager.setCanPickUpLoot(true);
