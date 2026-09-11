@@ -1389,21 +1389,21 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
     @Override
     public void saveChunkEntities(List<Entity> entities, boolean clearStored) {
+        // Direct loops; this runs on the critical path of chunk unloading, where the stream chains this
+        // replaces built several intermediate lists per unload
         List<Stack<?>> stacks = new ArrayList<>(entities.size());
-        if (this.stackManager.isEntityStackingEnabled()) {
-            stacks.addAll(entities.stream()
-                    .filter(x -> x instanceof LivingEntity && x.getType() != EntityType.ARMOR_STAND && x.getType() != EntityType.PLAYER)
-                    .map(x -> this.stackedEntities.get(x.getUniqueId()))
-                    .filter(Objects::nonNull)
-                    .toList());
-        }
-
-        if (this.stackManager.isItemStackingEnabled()) {
-            stacks.addAll(entities.stream()
-                    .filter(x -> x.getType() == VersionUtils.ITEM)
-                    .map(x -> this.stackedItems.get(x.getUniqueId()))
-                    .filter(Objects::nonNull)
-                    .toList());
+        boolean entityStackingEnabled = this.stackManager.isEntityStackingEnabled();
+        boolean itemStackingEnabled = this.stackManager.isItemStackingEnabled();
+        for (Entity entity : entities) {
+            if (entityStackingEnabled && entity instanceof LivingEntity && entity.getType() != EntityType.ARMOR_STAND && entity.getType() != EntityType.PLAYER) {
+                StackedEntity stackedEntity = this.stackedEntities.get(entity.getUniqueId());
+                if (stackedEntity != null)
+                    stacks.add(stackedEntity);
+            } else if (itemStackingEnabled && entity.getType() == VersionUtils.ITEM) {
+                StackedItem stackedItem = this.stackedItems.get(entity.getUniqueId());
+                if (stackedItem != null)
+                    stacks.add(stackedItem);
+            }
         }
 
         this.saveChunkEntityStacks(stacks, clearStored);
@@ -1411,28 +1411,19 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
     @Override
     public <T extends Stack<?>> void saveChunkEntityStacks(List<T> stacks, boolean clearStored) {
-        if (this.stackManager.isEntityStackingEnabled()) {
-            List<StackedEntity> stackedEntities = stacks.stream()
-                    .filter(x -> x instanceof StackedEntity)
-                    .map(x -> (StackedEntity) x)
-                    .toList();
-
-            stackedEntities.forEach(DataUtils::writeStackedEntity);
-
-            if (clearStored)
-                stackedEntities.stream().map(StackedEntity::getEntity).map(Entity::getUniqueId).forEach(this.stackedEntities::remove);
-        }
-
-        if (this.stackManager.isItemStackingEnabled()) {
-            List<StackedItem> stackedItems = stacks.stream()
-                    .filter(x -> x instanceof StackedItem)
-                    .map(x -> (StackedItem) x)
-                    .toList();
-
-            stackedItems.forEach(DataUtils::writeStackedItem);
-
-            if (clearStored)
-                stackedItems.stream().map(StackedItem::getItem).map(Entity::getUniqueId).forEach(this.stackedItems::remove);
+        boolean entityStackingEnabled = this.stackManager.isEntityStackingEnabled();
+        boolean itemStackingEnabled = this.stackManager.isItemStackingEnabled();
+        for (Stack<?> stack : stacks) {
+            if (entityStackingEnabled && stack instanceof StackedEntity stackedEntity) {
+                // Unloading and shutdown always write, no matter what the dirty state says
+                DataUtils.writeStackedEntity(stackedEntity);
+                if (clearStored)
+                    this.stackedEntities.remove(stackedEntity.getEntity().getUniqueId());
+            } else if (itemStackingEnabled && stack instanceof StackedItem stackedItem) {
+                DataUtils.writeStackedItem(stackedItem);
+                if (clearStored)
+                    this.stackedItems.remove(stackedItem.getItem().getUniqueId());
+            }
         }
     }
 
@@ -1442,16 +1433,61 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         for (Chunk chunk : this.stackChunkData.keySet())
             this.saveChunkBlocks(chunk, false);
 
-        // Save stacked entities and items
-        List<Stack<?>> stacks = new ArrayList<>(this.stackedEntities.size() + this.stackedItems.size());
-        stacks.addAll(this.stackedEntities.values());
-        stacks.addAll(this.stackedItems.values());
-        this.saveChunkEntityStacks(stacks, false);
-
         if (clearStored) {
+            // Shutdown and reload: write everything, now, in this call
+            List<Stack<?>> stacks = new ArrayList<>(this.stackedEntities.size() + this.stackedItems.size());
+            stacks.addAll(this.stackedEntities.values());
+            stacks.addAll(this.stackedItems.values());
+            this.saveChunkEntityStacks(stacks, false);
+
             this.stackChunkData.clear();
             this.stackedEntities.clear();
             this.stackedItems.clear();
+            return;
+        }
+
+        this.saveAutosaveStacks();
+    }
+
+    /**
+     * The periodic autosave. Serializing and GZIPing every stack in the world in a single tick is one of
+     * the largest stalls the plugin can produce, so this skips the stacks that have not changed since they
+     * were last written and spreads whatever is left across ticks under the main thread budget.
+     */
+    private void saveAutosaveStacks() {
+        List<Stack<?>> toSave = null;
+        if (this.stackManager.isEntityStackingEnabled()) {
+            for (StackedEntity stackedEntity : this.stackedEntities.values()) {
+                if (!stackedEntity.needsSave())
+                    continue;
+
+                if (toSave == null)
+                    toSave = new ArrayList<>();
+                toSave.add(stackedEntity);
+            }
+        }
+
+        if (this.stackManager.isItemStackingEnabled()) {
+            for (StackedItem stackedItem : this.stackedItems.values()) {
+                if (toSave == null)
+                    toSave = new ArrayList<>();
+                toSave.add(stackedItem);
+            }
+        }
+
+        if (toSave == null)
+            return;
+
+        List<Stack<?>> stacks = toSave;
+        BatchedMainThreadExecutor executor = BatchedMainThreadExecutor.getInstance();
+        if (executor.isPerRegion()) {
+            this.saveChunkEntityStacks(stacks, false);
+            return;
+        }
+
+        for (int i = 0; i < stacks.size(); i += MAIN_THREAD_BATCH_SIZE) {
+            List<Stack<?>> batch = stacks.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, stacks.size()));
+            executor.submit(() -> this.saveChunkEntityStacks(batch, false));
         }
     }
 

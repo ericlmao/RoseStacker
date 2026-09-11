@@ -92,8 +92,10 @@ public final class DataUtils {
     }
 
     public static void writeStackedEntity(StackedEntity stackedEntity) {
-        if (stackedEntity.getStackSize() == 1)
+        if (stackedEntity.getStackSize() == 1) {
+            stackedEntity.markSaved(); // Nothing to write, but nothing to keep re-checking either
             return;
+        }
 
         PersistentDataContainer pdc = stackedEntity.getEntity().getPersistentDataContainer();
         byte[] data = null;
@@ -119,8 +121,11 @@ public final class DataUtils {
             e.printStackTrace();
         }
 
-        if (data != null)
+        if (data != null) {
             pdc.set(ENTITY_KEY, PersistentDataType.BYTE_ARRAY, data);
+            // Lets the periodic autosave skip this stack until something about it changes again
+            stackedEntity.markSaved();
+        }
     }
 
     public static void clearStackedEntityData(LivingEntity entity) {

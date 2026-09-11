@@ -100,6 +100,10 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     private int lastUnstackCheckModifiedTicks = Integer.MIN_VALUE;
     private int unstackCheckIdleCycles;
 
+    // Autosave bookkeeping; see needsSave()
+    private int lastSavedModifiedTicks = Integer.MIN_VALUE;
+    private int lastSavedStackSize = -1;
+
     // Set while a freshly created stack is being instant-stacked, before its entity is valid
     private volatile boolean newlyCreated;
 
@@ -1032,6 +1036,26 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         this.lastUnstackCheckModifiedTicks = this.lastModifiedTicks;
         this.unstackCheckIdleCycles = 0;
         return true;
+    }
+
+    /**
+     * Checks whether anything has changed since the last time this stack was written to its entity.
+     * <p>
+     * The stack size is compared as well as the modified tick, so a storage mutation that went around
+     * {@link #markModified()} still counts as a change.
+     *
+     * @return true if this stack has changed since it was last saved, otherwise false
+     */
+    public boolean needsSave() {
+        return this.lastModifiedTicks != this.lastSavedModifiedTicks || this.getStackSize() != this.lastSavedStackSize;
+    }
+
+    /**
+     * Records that this stack has just been written to its entity.
+     */
+    public void markSaved() {
+        this.lastSavedModifiedTicks = this.lastModifiedTicks;
+        this.lastSavedStackSize = this.getStackSize();
     }
 
     /**
