@@ -16,6 +16,7 @@ import dev.rosewood.rosestacker.stack.settings.EntityStackSettings;
 import dev.rosewood.rosestacker.utils.EntityUtils;
 import dev.rosewood.rosestacker.utils.PersistentDataUtils;
 import dev.rosewood.rosestacker.utils.VersionUtils;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Objects;
 import org.bukkit.Material;
@@ -34,6 +35,7 @@ import org.bukkit.entity.ChestedHorse;
 import org.bukkit.entity.Chicken;
 import org.bukkit.entity.CopperGolem;
 import org.bukkit.entity.CopperGolem.Oxidizing;
+import org.bukkit.entity.Cow;
 import org.bukkit.entity.Creeper;
 import org.bukkit.entity.Enderman;
 import org.bukkit.entity.Entity;
@@ -240,9 +242,24 @@ public final class StackConditions {
 
         if (versionNumber > 21 || (versionNumber == 21 && minorVersionNumber >= 5)) {
             registerConfig(Chicken.class, "different-types", false, EntityStackComparisonResult.DIFFERENT_TYPES, (entity1, entity2) -> entity1.getVariant() != entity2.getVariant());
-            // Commodore rewrites make this one a headache, just ignoring it
-            //registerConfig(Cow.class, "different-types", false, EntityStackComparisonResult.DIFFERENT_TYPES, (entity1, entity2) -> entity1.getVariant() != entity2.getVariant());
             registerConfig(Pig.class, "different-types", false, EntityStackComparisonResult.DIFFERENT_TYPES, (entity1, entity2) -> entity1.getVariant() != entity2.getVariant());
+
+            // Due to commodore rewrites we have to do some shenanigans here
+            try {
+                @SuppressWarnings("unchecked")
+                Class<? extends Animals> cowClass = (Class<? extends Animals>) Class.forName("org,bukkit,entity,Cow".replace(",", "."));
+                Method method_getVariant = cowClass.getMethod("getVariant");
+                registerConfig(cowClass, "different-types", false, EntityStackComparisonResult.DIFFERENT_TYPES, (entity1, entity2) -> {
+                    try {
+                        return method_getVariant.invoke(entity1) != method_getVariant.invoke(entity2);
+                    } catch (ReflectiveOperationException e) {
+                        e.printStackTrace();
+                        return false;
+                    }
+                });
+            } catch (ReflectiveOperationException e) {
+                e.printStackTrace();
+            }
         }
 
         if (versionNumber > 21 || (versionNumber == 21 && minorVersionNumber >= 3)) {
