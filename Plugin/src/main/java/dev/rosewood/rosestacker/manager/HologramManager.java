@@ -52,7 +52,6 @@ public class HologramManager extends Manager implements Listener {
     private double renderDistanceSqrd;
     private int renderDistanceCells;
     private boolean hideThroughWalls;
-    private boolean asyncWatcherUpdates;
 
     public HologramManager(RosePlugin rosePlugin) {
         super(rosePlugin);
@@ -72,7 +71,6 @@ public class HologramManager extends Manager implements Listener {
         this.renderDistanceSqrd = (double) renderDistance * renderDistance;
         this.renderDistanceCells = (renderDistance >> CELL_SHIFT) + 1;
         this.hideThroughWalls = SettingKey.BLOCK_DYNAMIC_TAG_VIEW_RANGE_WALL_DETECTION_ENABLED.get();
-        this.asyncWatcherUpdates = StackedEntity.isAsyncDisplayUpdates();
     }
 
     @Override
@@ -104,8 +102,9 @@ public class HologramManager extends Manager implements Listener {
         // updateWatcher only reads player and hologram positions, walks blocks and sends packets, so on
         // Paper it can run on this timer's own thread. Scheduling it per player was about 135 main-thread
         // tasks a second on a full server, and the wall checks inside them ran on the main thread too.
+        boolean asyncWatcherUpdates = StackedEntity.isAsyncDisplayUpdates();
         for (Player player : players) {
-            if (this.asyncWatcherUpdates) {
+            if (asyncWatcherUpdates) {
                 this.updateWatcher(player);
             } else {
                 ThreadUtils.runOnEntity(player, () -> this.updateWatcher(player));
@@ -202,7 +201,7 @@ public class HologramManager extends Manager implements Listener {
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         this.playerStates.remove(player.getUniqueId());
-        if (this.asyncWatcherUpdates) {
+        if (StackedEntity.isAsyncDisplayUpdates()) {
             this.updateWatcher(player);
         } else {
             ThreadUtils.runOnEntity(player, () -> this.updateWatcher(player));
@@ -249,7 +248,7 @@ public class HologramManager extends Manager implements Listener {
             if (!recreate && !changed)
                 return; // Nothing to send; don't schedule per-watcher tasks
 
-            for (Player player : hologram.getWatchers())
+            for (Player player : hologram.getWatcherSnapshot())
                 this.updateTextSafely(player, hologram, recreate);
         }
     }
@@ -275,12 +274,12 @@ public class HologramManager extends Manager implements Listener {
             return;
 
         this.unindexHologram(hologram);
-        for (Player player : hologram.getWatchers()) {
+        for (Player player : hologram.getWatcherSnapshot()) {
             PlayerHologramState state = this.playerStates.get(player.getUniqueId());
             if (state != null)
                 state.watching.remove(hologram);
 
-            if (this.asyncWatcherUpdates) {
+            if (StackedEntity.isAsyncDisplayUpdates()) {
                 hologram.removeWatcher(player);
             } else {
                 ThreadUtils.runOnEntity(player, () -> hologram.removeWatcher(player));
@@ -301,7 +300,7 @@ public class HologramManager extends Manager implements Listener {
             this.updateWatcher(player, state, eye, hologram);
         };
 
-        if (this.asyncWatcherUpdates) {
+        if (StackedEntity.isAsyncDisplayUpdates()) {
             task.run();
         } else {
             ThreadUtils.runOnEntity(player, task);
@@ -317,7 +316,7 @@ public class HologramManager extends Manager implements Listener {
             }
         };
 
-        if (this.asyncWatcherUpdates) {
+        if (StackedEntity.isAsyncDisplayUpdates()) {
             task.run();
         } else {
             ThreadUtils.runOnEntity(player, task);

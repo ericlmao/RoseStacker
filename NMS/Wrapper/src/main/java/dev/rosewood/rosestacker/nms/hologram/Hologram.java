@@ -66,9 +66,19 @@ public abstract class Hologram {
      * @return a set of all players watching this hologram
      */
     public Set<Player> getWatchers() {
-        // A snapshot; the backing map is synchronized, but iterating its key set is not
+        return this.watchers.keySet();
+    }
+
+    /**
+     * Gets a snapshot of the watchers, safe to iterate from any thread. The backing map is synchronized,
+     * but iterating its key set is not, and watcher updates can now come from the hologram timer's own
+     * thread as well as from the main thread.
+     *
+     * @return the players watching this hologram
+     */
+    public List<Player> getWatcherSnapshot() {
         synchronized (this.watchers) {
-            return Set.copyOf(this.watchers.keySet());
+            return List.copyOf(this.watchers.keySet());
         }
     }
 
@@ -112,7 +122,7 @@ public abstract class Hologram {
      * Deletes the hologram for all watchers
      */
     public void delete() {
-        this.getWatchers().forEach(this::delete);
+        this.getWatcherSnapshot().forEach(this::delete);
         this.watchers.clear();
     }
 
@@ -131,7 +141,7 @@ public abstract class Hologram {
         for (int i = 0; i < text.size(); i++)
             this.hologramLines.get(i).setText(text.get(i));
 
-        this.update(this.getWatchers(), false);
+        this.update(this.getWatcherSnapshot(), false);
     }
 
     /**
@@ -182,7 +192,7 @@ public abstract class Hologram {
     }
 
     private void createLines(List<String> text) {
-        Set<Player> watchers = this.getWatchers();
+        List<Player> watchers = this.getWatcherSnapshot();
         watchers.forEach(this::delete);
         this.hologramLines.clear();
         for (int i = 0; i < text.size(); i++) {

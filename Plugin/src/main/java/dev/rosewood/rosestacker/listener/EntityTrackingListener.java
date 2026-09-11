@@ -74,12 +74,18 @@ public class EntityTrackingListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onItemHeld(PlayerItemHeldEvent event) {
+        if (!StackedEntity.isAsyncDisplayUpdates())
+            return;
+
         Player player = event.getPlayer();
         ItemUtils.setHoldingStackingTool(player.getUniqueId(), ItemUtils.isStackingTool(player.getInventory().getItem(event.getNewSlot())));
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onSwapHandItems(PlayerSwapHandItemsEvent event) {
+        if (!StackedEntity.isAsyncDisplayUpdates())
+            return;
+
         ItemUtils.setHoldingStackingTool(event.getPlayer().getUniqueId(), ItemUtils.isStackingTool(event.getMainHandItem()));
     }
 
@@ -110,10 +116,18 @@ public class EntityTrackingListener implements Listener {
     }
 
     private void refreshStackingTool(Player player) {
+        // Only the async display path reads this; the scheduled path reads the held item itself, on the
+        // player's own thread, which is also the only thread that may read it on Folia
+        if (!StackedEntity.isAsyncDisplayUpdates())
+            return;
+
         ItemUtils.setHoldingStackingTool(player.getUniqueId(), ItemUtils.isStackingTool(player.getInventory().getItemInMainHand()));
     }
 
     private void refreshStackingToolDelayed(Player player) {
+        if (!StackedEntity.isAsyncDisplayUpdates())
+            return;
+
         // The held item is only correct after the event has been applied
         ThreadUtils.runSyncDelayed(() -> {
             if (player.isOnline())

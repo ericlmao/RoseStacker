@@ -224,7 +224,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             return;
 
         this.entity = entity;
-        this.invalidateCachedFlags();
+        this.onEntityReplaced();
         this.stackedEntityDataStorage.updateEntity(entity);
         this.resetHasMoved();
         this.updateDisplaySafely();
@@ -286,7 +286,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         stackManager.setEntityStackingTemporarilyDisabled(true);
         this.entity = this.stackedEntityDataStorage.pop().createEntity(oldEntity.getLocation(), true, oldEntity.getType());
-        this.invalidateCachedFlags();
+        this.onEntityReplaced();
         stackManager.setEntityStackingTemporarilyDisabled(false);
         this.stackSettings.applyUnstackProperties(this.entity, oldEntity);
         stackManager.updateStackedEntityKey(oldEntity, this);
@@ -772,6 +772,23 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     }
 
     /**
+     * Drops everything that was about the previous head entity after it has been swapped out: the cached
+     * container flags, whatever each client was last sent (their client has a different entity now) and
+     * the tracked player set, which is refilled by the track events for the new entity.
+     */
+    private void onEntityReplaced() {
+        this.invalidateCachedFlags();
+        this.clearNametagStates();
+
+        Set<UUID> tracking = this.trackingPlayers;
+        if (tracking != null)
+            tracking.clear();
+
+        if (isAsyncDisplayUpdates() && this.entity != null && this.entity.isValid() && ThreadUtils.isEntityThread(this.entity))
+            this.seedTrackingPlayers();
+    }
+
+    /**
      * Forgets every cached persistent data container flag so the next read goes back to the container.
      */
     public void invalidateCachedFlags() {
@@ -956,7 +973,8 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
     /**
      * What one player last received for this stack, and the last wall check run for them. Only ever
-     * touched from the stack entity's own thread, so the fields are plain.
+     * touched from whichever thread is updating this stack's display, so the fields are plain; the worst a
+     * concurrent update can cost is a nametag packet sent twice or one cycle late.
      */
     private static final class NametagState {
 
