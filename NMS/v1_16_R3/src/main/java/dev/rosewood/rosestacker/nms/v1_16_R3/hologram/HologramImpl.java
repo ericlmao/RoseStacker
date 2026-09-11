@@ -27,6 +27,11 @@ import org.bukkit.entity.Player;
 
 public class HologramImpl extends Hologram {
 
+    // The client only needs a hologram line's UUID to be stable for its entity id, so it is derived from the
+    // id rather than drawn fresh per line per watcher. UUID.randomUUID() goes through a shared SecureRandom
+    // with a synchronized nextBytes, and create() runs every time any player starts watching any hologram.
+    private static final long HOLOGRAM_UUID_HIGH_BITS = 0x526F736553746163L; // "RoseStac"
+
     private static final List<DataWatcher.Item<?>> DATA_ITEMS = List.of(
             new DataWatcher.Item<>(DataWatcherRegistry.c.a(7), 0.5F),
             new DataWatcher.Item<>(DataWatcherRegistry.i.a(9), true),
@@ -42,7 +47,7 @@ public class HologramImpl extends Hologram {
         for (HologramLine line : this.hologramLines) {
             PacketPlayOutSpawnEntity packet = new PacketPlayOutSpawnEntity(
                     line.getEntityId(),
-                    UUID.randomUUID(),
+                    new UUID(HOLOGRAM_UUID_HIGH_BITS, line.getEntityId()),
                     line.getLocation().getX(),
                     line.getLocation().getY(),
                     line.getLocation().getZ(),

@@ -2,9 +2,9 @@ package dev.rosewood.rosestacker.nms.storage;
 
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Queue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.bukkit.entity.LivingEntity;
@@ -162,13 +162,35 @@ public abstract class StackedEntityDataStorage {
     public abstract List<LivingEntity> removeIf(Function<LivingEntity, Boolean> function);
 
     /**
-     * Creates a backing queue to be used for the storage
+     * Applies an amount of damage to every entry in this storage and removes the entries that do not survive
+     * it. The default implementation materializes every entry as an entity to read and write its health;
+     * storages that keep health in their own format are expected to edit it in place and only materialize the
+     * entries that died, which the loot code needs real entities for.
+     *
+     * @param damage The amount of damage to apply to each entry
+     * @return a list of the entries that died, materialized as entities
+     */
+    public List<LivingEntity> damageAll(double damage) {
+        return this.removeIf(entity -> {
+            if (entity.getHealth() - damage <= 0)
+                return true; // Don't set the health below 0, as that will trigger the death event which we want to avoid
+
+            entity.setHealth(entity.getHealth() - damage);
+            return false;
+        });
+    }
+
+    /**
+     * Creates a backing queue to be used for the storage. The returned queue is not thread safe on its own;
+     * implementations are expected to guard every access to it with a lock of their own. The bulk operations
+     * already did exactly that, so the queue's internal locking was a second, redundant acquisition on top of
+     * an ArrayList copy, plus a node allocation for every entry.
      *
      * @return the backing queue
      * @param <T> the type of the queue
      */
     public static <T> Queue<T> createBackingQueue() {
-        return new LinkedBlockingQueue<>();
+        return new ArrayDeque<>();
     }
 
 }

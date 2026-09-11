@@ -4,7 +4,6 @@ import dev.rosewood.rosestacker.nms.NMSAdapter;
 import dev.rosewood.rosestacker.nms.storage.EntityDataEntry;
 import dev.rosewood.rosestacker.nms.v1_21_R3.NMSHandlerImpl;
 import java.util.Optional;
-import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.DoubleTag;
@@ -23,14 +22,26 @@ import org.bukkit.entity.LivingEntity;
 public class NBTEntityDataEntry implements EntityDataEntry {
 
     private final CompoundTag compoundTag;
+    private final boolean owned;
 
     public NBTEntityDataEntry(LivingEntity livingEntity) {
         this.compoundTag = new CompoundTag();
         ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity, this.compoundTag);
+        this.owned = false;
     }
 
     public NBTEntityDataEntry(CompoundTag compoundTag) {
+        this(compoundTag, false);
+    }
+
+    /**
+     * @param compoundTag The tag to build entities out of
+     * @param owned true if this entry may edit the given tag in place instead of copying it first.
+     *              Only safe for tags built for this entry alone and referenced nowhere else.
+     */
+    public NBTEntityDataEntry(CompoundTag compoundTag, boolean owned) {
         this.compoundTag = compoundTag;
+        this.owned = owned;
     }
 
     public CompoundTag get() {
@@ -41,7 +52,9 @@ public class NBTEntityDataEntry implements EntityDataEntry {
     public LivingEntity createEntity(Location location, boolean addToWorld, EntityType entityType) {
         try {
             NMSHandlerImpl nmsHandler = (NMSHandlerImpl) NMSAdapter.getHandler();
-            CompoundTag nbt = this.compoundTag.copy();
+            // rebuild() already hands back a freshly merged tag that nothing else references,
+            // so copying the entire entity tag a second time here is pure waste
+            CompoundTag nbt = this.owned ? this.compoundTag : this.compoundTag.copy();
 
             ListTag positionTagList = nbt.getList("Pos", Tag.TAG_DOUBLE);
             if (positionTagList == null)
@@ -56,7 +69,7 @@ public class NBTEntityDataEntry implements EntityDataEntry {
             this.setTag(rotationTagList, 0, FloatTag.valueOf(location.getYaw()));
             this.setTag(rotationTagList, 1, FloatTag.valueOf(location.getPitch()));
             nbt.put("Rotation", rotationTagList);
-            nbt.putUUID("UUID", UUID.randomUUID()); // Reset the UUID to resolve possible duplicates
+            nbt.remove("UUID"); // Drop any stored UUID so the entity keeps the fresh one createCreature gave it
 
             Optional<net.minecraft.world.entity.EntityType<?>> optionalEntity = net.minecraft.world.entity.EntityType.byString(entityType.getKey().getKey());
             if (optionalEntity.isPresent()) {

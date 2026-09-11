@@ -1,7 +1,6 @@
 package dev.rosewood.rosestacker.nms.v1_21_R5;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.nms.NMSHandler;
@@ -106,6 +105,11 @@ import sun.misc.Unsafe;
 
 @SuppressWarnings("unchecked")
 public class NMSHandlerImpl implements NMSHandler {
+
+    // Hoisted out of the send path. These are the vanilla Entity accessors for custom name and custom name
+    // visibility, and a fresh pair was allocated for every nametag packet sent to every player.
+    private static final EntityDataAccessor<Optional<Component>> DATA_CUSTOM_NAME = EntityDataSerializers.OPTIONAL_COMPONENT.createAccessor(2);
+    private static final EntityDataAccessor<Boolean> DATA_CUSTOM_NAME_VISIBLE = EntityDataSerializers.BOOLEAN.createAccessor(3);
 
     // Stack display names repeat across thousands of entities and are sent to many players; parse each
     // distinct string once and share the immutable component instead of re-parsing per packet
@@ -268,10 +272,10 @@ public class NMSHandlerImpl implements NMSHandler {
     @Override
     public void updateEntityNameTagForPlayer(Player player, org.bukkit.entity.Entity entity, String customName, boolean customNameVisible) {
         try {
-            List<SynchedEntityData.DataValue<?>> dataValues = new ArrayList<>();
             Optional<Component> nameComponent = customName == null ? Optional.empty() : NAME_COMPONENT_CACHE.get(customName, x -> Optional.ofNullable(CraftChatMessage.fromStringOrNull(x)));
-            dataValues.add(SynchedEntityData.DataValue.create(EntityDataSerializers.OPTIONAL_COMPONENT.createAccessor(2), nameComponent));
-            dataValues.add(SynchedEntityData.DataValue.create(EntityDataSerializers.BOOLEAN.createAccessor(3), customNameVisible));
+            List<SynchedEntityData.DataValue<?>> dataValues = List.of(
+                    SynchedEntityData.DataValue.create(DATA_CUSTOM_NAME, nameComponent),
+                    SynchedEntityData.DataValue.create(DATA_CUSTOM_NAME_VISIBLE, customNameVisible));
 
             ClientboundSetEntityDataPacket entityDataPacket = new ClientboundSetEntityDataPacket(entity.getEntityId(), dataValues);
             ((CraftPlayer) player).getHandle().connection.send(entityDataPacket);
@@ -283,7 +287,7 @@ public class NMSHandlerImpl implements NMSHandler {
     @Override
     public void updateEntityNameTagVisibilityForPlayer(Player player, org.bukkit.entity.Entity entity, boolean customNameVisible) {
         try {
-            List<SynchedEntityData.DataValue<?>> dataValues = Lists.newArrayList(SynchedEntityData.DataValue.create(EntityDataSerializers.BOOLEAN.createAccessor(3), customNameVisible));
+            List<SynchedEntityData.DataValue<?>> dataValues = List.of(SynchedEntityData.DataValue.create(DATA_CUSTOM_NAME_VISIBLE, customNameVisible));
             ClientboundSetEntityDataPacket entityDataPacket = new ClientboundSetEntityDataPacket(entity.getEntityId(), dataValues);
             ((CraftPlayer) player).getHandle().connection.send(entityDataPacket);
         } catch (Exception e) {
@@ -598,9 +602,10 @@ public class NMSHandlerImpl implements NMSHandler {
         } else {
             ProblemReporter.Collector reporter = new ProblemReporter.Collector();
             TagValueOutput valueOutput = TagValueOutput.createWithContext(reporter, nmsEntity.registryAccess());
+            ((CraftLivingEntity) livingEntity).getHandle().saveWithoutId(valueOutput);
+            // Checked after the save, not before it: nothing can have been reported until the save runs
             if (!reporter.isEmpty())
                 RoseStacker.getInstance().getLogger().severe(reporter.getTreeReport());
-            ((CraftLivingEntity) livingEntity).getHandle().saveWithoutId(valueOutput);
             return valueOutput.buildResult();
         }
     }
