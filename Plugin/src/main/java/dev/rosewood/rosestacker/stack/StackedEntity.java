@@ -5,7 +5,6 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import dev.rosewood.rosegarden.utils.EntitySpawnUtil;
 import dev.rosewood.rosegarden.utils.NMSUtil;
-import dev.rosewood.rosegarden.utils.StringPlaceholders;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.api.RoseStackerAPI;
 import dev.rosewood.rosestacker.config.SettingKey;
@@ -14,7 +13,6 @@ import dev.rosewood.rosestacker.event.EntityStackMultipleDeathEvent.EntityDrops;
 import dev.rosewood.rosestacker.hook.SpawnerFlagPersistenceHook;
 import dev.rosewood.rosestacker.hook.WorldGuardHook;
 import dev.rosewood.rosestacker.manager.EntityCacheManager;
-import dev.rosewood.rosestacker.manager.LocaleManager;
 import dev.rosewood.rosestacker.manager.StackManager;
 import dev.rosewood.rosestacker.manager.StackSettingManager;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
@@ -726,9 +724,15 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
      */
     public boolean isSpawnedFromSpawner() {
         Boolean value = this.spawnedFromSpawner;
-        if (value == null)
-            this.spawnedFromSpawner = value = PersistentDataUtils.isSpawnedFromSpawner(this.entity);
-        return value;
+        if (value != null)
+            return value;
+
+        boolean spawnedFromSpawner = PersistentDataUtils.isSpawnedFromSpawner(this.entity);
+        // Half of this answer is the entity's spawn reason, which is only set once the entity has been
+        // added to the world, so an answer computed before that is not worth remembering
+        if (this.entity.isValid())
+            this.spawnedFromSpawner = spawnedFromSpawner;
+        return spawnedFromSpawner;
     }
 
     /**
@@ -736,9 +740,13 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
      */
     public boolean isSpawnedFromTrialSpawner() {
         Boolean value = this.spawnedFromTrialSpawner;
-        if (value == null)
-            this.spawnedFromTrialSpawner = value = PersistentDataUtils.isSpawnedFromTrialSpawner(this.entity);
-        return value;
+        if (value != null)
+            return value;
+
+        boolean spawnedFromTrialSpawner = PersistentDataUtils.isSpawnedFromTrialSpawner(this.entity);
+        if (this.entity.isValid()) // Same spawn reason caveat as isSpawnedFromSpawner
+            this.spawnedFromTrialSpawner = spawnedFromTrialSpawner;
+        return spawnedFromTrialSpawner;
     }
 
     /**
