@@ -11,6 +11,9 @@ import dev.rosewood.rosestacker.stack.settings.ItemStackSettings;
 import dev.rosewood.rosestacker.utils.PersistentDataUtils;
 import dev.rosewood.rosestacker.utils.StackerUtils;
 import dev.rosewood.rosestacker.utils.ThreadUtils;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -35,6 +38,12 @@ public class StackedItem extends Stack<ItemStackSettings> implements Comparable<
     // Read once instead of on every pass; the item stacking pass consults this for the item and for every
     // neighbour it looks at. PersistentDataUtils#setUnstackable clears it through the stack.
     private volatile Boolean unstackable;
+
+    // The players whose client currently has this item, maintained by EntityTrackingListener
+    private volatile Set<UUID> trackingPlayers;
+
+    // Set while a freshly created stack is being instant-stacked, before its item is valid
+    private volatile boolean newlyCreated;
 
     public StackedItem(int size, Item item, boolean updateDisplay) {
         this.size = size;
@@ -81,6 +90,60 @@ public class StackedItem extends Stack<ItemStackSettings> implements Comparable<
      */
     public void invalidateCachedFlags() {
         this.unstackable = null;
+    }
+
+    /**
+     * Records that a player's client now has this item.
+     *
+     * @param playerId The player that started tracking this item
+     */
+    public void addTrackingPlayer(UUID playerId) {
+        Set<UUID> tracking = this.trackingPlayers;
+        if (tracking == null) {
+            synchronized (this) {
+                tracking = this.trackingPlayers;
+                if (tracking == null)
+                    this.trackingPlayers = tracking = ConcurrentHashMap.newKeySet(4);
+            }
+        }
+
+        tracking.add(playerId);
+    }
+
+    /**
+     * Records that a player's client no longer has this item.
+     *
+     * @param playerId The player that stopped tracking this item
+     */
+    public void removeTrackingPlayer(UUID playerId) {
+        Set<UUID> tracking = this.trackingPlayers;
+        if (tracking != null)
+            tracking.remove(playerId);
+    }
+
+    /**
+     * @return the players whose client currently has this item, never null
+     */
+    public Set<UUID> getTrackingPlayers() {
+        Set<UUID> tracking = this.trackingPlayers;
+        return tracking != null ? tracking : Set.of();
+    }
+
+    /**
+     * @return true if this stack was just created and its item has not finished spawning yet
+     */
+    public boolean isNewlyCreated() {
+        return this.newlyCreated;
+    }
+
+    /**
+     * Marks this stack as freshly created, so the stacking pass does not mistake an item that has not
+     * finished spawning for one that has been removed.
+     *
+     * @param newlyCreated true while the stack is being created, otherwise false
+     */
+    public void setNewlyCreated(boolean newlyCreated) {
+        this.newlyCreated = newlyCreated;
     }
 
     public void increaseStackSize(int amount, boolean updateDisplay) {

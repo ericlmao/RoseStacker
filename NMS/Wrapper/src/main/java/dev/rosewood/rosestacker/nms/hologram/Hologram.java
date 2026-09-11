@@ -35,8 +35,9 @@ public abstract class Hologram {
      * @param visible true to make the hologram visible, false otherwise
      */
     public void addWatcher(Player player, boolean visible) {
-        if (!this.watchers.containsKey(player)) {
-            this.watchers.put(player, visible);
+        // Watcher updates can now come from the async hologram timer as well as from the main thread, so
+        // the map is only ever touched through atomic operations
+        if (this.watchers.putIfAbsent(player, visible) == null) {
             this.create(player);
             this.update(List.of(player), true);
         }
@@ -57,17 +58,18 @@ public abstract class Hologram {
      * @param player The player to remove
      */
     public void removeWatcher(Player player) {
-        if (this.watchers.containsKey(player)) {
-            this.watchers.remove(player);
+        if (this.watchers.remove(player) != null)
             this.delete(player);
-        }
     }
 
     /**
      * @return a set of all players watching this hologram
      */
     public Set<Player> getWatchers() {
-        return this.watchers.keySet();
+        // A snapshot; the backing map is synchronized, but iterating its key set is not
+        synchronized (this.watchers) {
+            return Set.copyOf(this.watchers.keySet());
+        }
     }
 
     /**
@@ -98,21 +100,19 @@ public abstract class Hologram {
      * @param visible true to make the hologram visible, false otherwise
      */
     public void setVisibility(Player player, boolean visible) {
-        Boolean alreadyVisible = this.watchers.get(player);
+        Boolean alreadyVisible = this.watchers.replace(player, visible);
         if (alreadyVisible == null)
-            return;
+            return; // Not a watcher
 
-        if (alreadyVisible ^ visible) {
-            this.watchers.put(player, visible);
+        if (alreadyVisible ^ visible)
             this.update(List.of(player), true);
-        }
     }
 
     /**
      * Deletes the hologram for all watchers
      */
     public void delete() {
-        this.watchers.keySet().forEach(this::delete);
+        this.getWatchers().forEach(this::delete);
         this.watchers.clear();
     }
 
@@ -131,7 +131,7 @@ public abstract class Hologram {
         for (int i = 0; i < text.size(); i++)
             this.hologramLines.get(i).setText(text.get(i));
 
-        this.update(this.watchers.keySet(), false);
+        this.update(this.getWatchers(), false);
     }
 
     /**
@@ -182,15 +182,16 @@ public abstract class Hologram {
     }
 
     private void createLines(List<String> text) {
-        this.watchers.keySet().forEach(this::delete);
+        Set<Player> watchers = this.getWatchers();
+        watchers.forEach(this::delete);
         this.hologramLines.clear();
         for (int i = 0; i < text.size(); i++) {
             double offset = (text.size() - i - 1) * LINE_OFFSET;
             Location lineLocation = this.location.clone().add(0, offset, 0);
             this.hologramLines.add(new HologramLine(this.entityIdSupplier.get(), lineLocation, text.get(i)));
         }
-        this.watchers.keySet().forEach(this::create);
-        this.update(this.watchers.keySet(), true);
+        watchers.forEach(this::create);
+        this.update(watchers, true);
     }
 
     /**

@@ -5,6 +5,7 @@ import com.google.common.cache.CacheBuilder;
 import dev.rosewood.rosegarden.RosePlugin;
 import dev.rosewood.rosegarden.manager.Manager;
 import dev.rosewood.rosegarden.scheduler.task.ScheduledTask;
+import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.config.SettingKey;
 import dev.rosewood.rosestacker.hook.WorldGuardHook;
 import dev.rosewood.rosestacker.nms.spawner.SpawnerType;
@@ -20,6 +21,7 @@ import dev.rosewood.rosestacker.stack.settings.BlockStackSettings;
 import dev.rosewood.rosestacker.stack.settings.EntityStackSettings;
 import dev.rosewood.rosestacker.stack.settings.MultikillBound;
 import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
+import dev.rosewood.rosestacker.utils.BatchedMainThreadExecutor;
 import dev.rosewood.rosestacker.utils.DataUtils;
 import java.time.Duration;
 import java.util.Collection;
@@ -81,6 +83,13 @@ public class StackManager extends Manager implements StackingLogic {
 
     @Override
     public void reload() {
+        // Nametag and hologram packets can only be built and sent off the main thread on a Paper server;
+        // Folia owns entities per region, so there the display passes keep scheduling per entity
+        StackedEntity.setAsyncDisplayUpdates(SettingKey.MISC_ASYNC_DISPLAY_UPDATES.get() && NMSUtil.isPaper() && !NMSUtil.isFolia());
+
+        // Must be running before the StackingThreads below start submitting work to it
+        BatchedMainThreadExecutor.getInstance().start();
+
         this.entityDataStorageType = StackedEntityDataStorageType.fromName(SettingKey.ENTITY_DATA_STORAGE_TYPE.get());
         this.disabledWorldPatterns.addAll(this.compileWorldNamePatterns(SettingKey.DISABLED_WORLDS.get()));
         this.enabledWorldPatterns.addAll(this.compileWorldNamePatterns(SettingKey.ENABLED_WORLDS.get()));
@@ -115,6 +124,9 @@ public class StackManager extends Manager implements StackingLogic {
             this.autosaveTask.cancel();
             this.autosaveTask = null;
         }
+
+        // Run anything still queued before saving, so work that was spread over ticks is not lost
+        BatchedMainThreadExecutor.getInstance().stop();
 
         // Save anything that's loaded
         this.saveAllData(true);

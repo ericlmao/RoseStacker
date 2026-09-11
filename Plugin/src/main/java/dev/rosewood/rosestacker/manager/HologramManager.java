@@ -7,6 +7,7 @@ import dev.rosewood.rosestacker.config.SettingKey;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
 import dev.rosewood.rosestacker.nms.NMSHandler;
 import dev.rosewood.rosestacker.nms.hologram.Hologram;
+import dev.rosewood.rosestacker.stack.StackedEntity;
 import dev.rosewood.rosestacker.utils.EntityUtils;
 import dev.rosewood.rosestacker.utils.ThreadUtils;
 import java.util.ArrayList;
@@ -51,6 +52,7 @@ public class HologramManager extends Manager implements Listener {
     private double renderDistanceSqrd;
     private int renderDistanceCells;
     private boolean hideThroughWalls;
+    private boolean asyncWatcherUpdates;
 
     public HologramManager(RosePlugin rosePlugin) {
         super(rosePlugin);
@@ -70,6 +72,7 @@ public class HologramManager extends Manager implements Listener {
         this.renderDistanceSqrd = (double) renderDistance * renderDistance;
         this.renderDistanceCells = (renderDistance >> CELL_SHIFT) + 1;
         this.hideThroughWalls = SettingKey.BLOCK_DYNAMIC_TAG_VIEW_RANGE_WALL_DETECTION_ENABLED.get();
+        this.asyncWatcherUpdates = StackedEntity.isAsyncDisplayUpdates();
     }
 
     @Override
@@ -98,12 +101,21 @@ public class HologramManager extends Manager implements Listener {
             this.playerStates.keySet().removeIf(id -> !online.contains(id));
         }
 
-        for (Player player : players)
-            ThreadUtils.runOnEntity(player, () -> this.updateWatcher(player));
+        // updateWatcher only reads player and hologram positions, walks blocks and sends packets, so on
+        // Paper it can run on this timer's own thread. Scheduling it per player was about 135 main-thread
+        // tasks a second on a full server, and the wall checks inside them ran on the main thread too.
+        for (Player player : players) {
+            if (this.asyncWatcherUpdates) {
+                this.updateWatcher(player);
+            } else {
+                ThreadUtils.runOnEntity(player, () -> this.updateWatcher(player));
+            }
+        }
     }
 
     /**
-     * Brings one player's hologram watchers up to date. Runs on the player's thread.
+     * Brings one player's hologram watchers up to date. Runs on the player's thread, or on the watcher
+     * timer's thread when async display updates are enabled.
      * <p>
      * Instead of testing this player against every hologram (players x holograms work per cycle, most of
      * it calling removeWatcher on holograms they were never watching), this walks only the holograms the
@@ -190,7 +202,11 @@ public class HologramManager extends Manager implements Listener {
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         this.playerStates.remove(player.getUniqueId());
-        ThreadUtils.runOnEntity(player, () -> this.updateWatcher(player));
+        if (this.asyncWatcherUpdates) {
+            this.updateWatcher(player);
+        } else {
+            ThreadUtils.runOnEntity(player, () -> this.updateWatcher(player));
+        }
     }
 
     @EventHandler
@@ -233,7 +249,7 @@ public class HologramManager extends Manager implements Listener {
             if (!recreate && !changed)
                 return; // Nothing to send; don't schedule per-watcher tasks
 
-            for (Player player : new ArrayList<>(hologram.getWatchers()))
+            for (Player player : hologram.getWatchers())
                 this.updateTextSafely(player, hologram, recreate);
         }
     }
@@ -259,16 +275,21 @@ public class HologramManager extends Manager implements Listener {
             return;
 
         this.unindexHologram(hologram);
-        for (Player player : new ArrayList<>(hologram.getWatchers())) {
+        for (Player player : hologram.getWatchers()) {
             PlayerHologramState state = this.playerStates.get(player.getUniqueId());
             if (state != null)
                 state.watching.remove(hologram);
-            ThreadUtils.runOnEntity(player, () -> hologram.removeWatcher(player));
+
+            if (this.asyncWatcherUpdates) {
+                hologram.removeWatcher(player);
+            } else {
+                ThreadUtils.runOnEntity(player, () -> hologram.removeWatcher(player));
+            }
         }
     }
 
     private void updateWatcherSafely(Player player, Hologram hologram) {
-        ThreadUtils.runOnEntity(player, () -> {
+        Runnable task = () -> {
             if (!player.isValid())
                 return;
 
@@ -278,17 +299,29 @@ public class HologramManager extends Manager implements Listener {
 
             PlayerHologramState state = this.playerStates.computeIfAbsent(player.getUniqueId(), x -> new PlayerHologramState());
             this.updateWatcher(player, state, eye, hologram);
-        });
+        };
+
+        if (this.asyncWatcherUpdates) {
+            task.run();
+        } else {
+            ThreadUtils.runOnEntity(player, task);
+        }
     }
 
     private void updateTextSafely(Player player, Hologram hologram, boolean recreate) {
-        ThreadUtils.runOnEntity(player, () -> {
+        Runnable task = () -> {
             if (recreate) {
                 hologram.refresh(player);
             } else {
                 hologram.update(player, true);
             }
-        });
+        };
+
+        if (this.asyncWatcherUpdates) {
+            task.run();
+        } else {
+            ThreadUtils.runOnEntity(player, task);
+        }
     }
 
     private void indexHologram(Hologram hologram) {

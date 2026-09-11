@@ -6,8 +6,9 @@ public class HologramLine {
 
     private final int entityId;
     private final Location location;
-    private String text;
-    private boolean dirty;
+    // The text is set from whichever thread updated the stack and read by the hologram update that follows
+    private volatile String text;
+    private volatile boolean dirty;
 
     public HologramLine(int entityId, Location location, String text) {
         this.entityId = entityId;
