@@ -23,6 +23,7 @@ import dev.rosewood.rosestacker.stack.settings.MultikillBound;
 import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
 import dev.rosewood.rosestacker.utils.BatchedMainThreadExecutor;
 import dev.rosewood.rosestacker.utils.DataUtils;
+import dev.rosewood.rosestacker.utils.ItemUtils;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.HashMap;
@@ -86,6 +87,11 @@ public class StackManager extends Manager implements StackingLogic {
         // Nametag and hologram packets can only be built and sent off the main thread on a Paper server;
         // Folia owns entities per region, so there the display passes keep scheduling per entity
         StackedEntity.setAsyncDisplayUpdates(SettingKey.MISC_ASYNC_DISPLAY_UPDATES.get() && NMSUtil.isPaper() && !NMSUtil.isFolia());
+
+        // The reload cleared which players are holding the stacking tool, and only the held-item events
+        // refill it, so read it back for everyone who is already online
+        if (StackedEntity.isAsyncDisplayUpdates())
+            ItemUtils.seedStackingToolHolders();
 
         // Must be running before the StackingThreads below start submitting work to it
         BatchedMainThreadExecutor.getInstance().start();

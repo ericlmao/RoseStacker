@@ -121,7 +121,7 @@ public class EntityTrackingListener implements Listener {
         if (!StackedEntity.isAsyncDisplayUpdates())
             return;
 
-        ItemUtils.setHoldingStackingTool(player.getUniqueId(), ItemUtils.isStackingTool(player.getInventory().getItemInMainHand()));
+        ItemUtils.refreshHoldingStackingTool(player);
     }
 
     private void refreshStackingToolDelayed(Player player) {

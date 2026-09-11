@@ -5,6 +5,7 @@ import dev.rosewood.rosegarden.utils.NMSUtil;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.config.SettingKey;
 import dev.rosewood.rosestacker.manager.LocaleManager;
+import dev.rosewood.rosestacker.spawning.NearbyPlayerSnapshot;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.text.NumberFormat;
@@ -337,6 +338,7 @@ public final class StackerUtils {
         cachedStackableEntityTypes = null;
         EntityUtils.clearCache();
         ItemUtils.clearCache();
+        NearbyPlayerSnapshot.clear();
 
         String separator = RoseStacker.getInstance().getManager(LocaleManager.class).getLocaleMessage("number-separator");
         groupingSeparator = !separator.isEmpty() ? separator.charAt(0) : ',';

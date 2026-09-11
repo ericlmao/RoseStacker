@@ -28,7 +28,11 @@ public final class NearbyPlayerSnapshot {
     /** One tick. The activation check itself only runs every SPAWNER_PLAYER_CHECK_FREQUENCY ticks. */
     private static final long REFRESH_INTERVAL_NANOS = 50_000_000L;
     private static final double[] EMPTY = new double[0];
-    /** Keyed by world UID rather than by the World so an unloaded world is not kept alive by the cache */
+    /**
+     * Keyed by world UID rather than by the World, so the map itself never holds an unloaded world alive.
+     * The entries are still dropped explicitly: {@link #forget} on world unload and {@link #clear} on
+     * reload, since an entry that nothing prunes keeps a stale position array around forever.
+     */
     private static final Map<UUID, NearbyPlayerSnapshot> SNAPSHOTS = new ConcurrentHashMap<>();
 
     private volatile double[] positions;
@@ -66,6 +70,23 @@ public final class NearbyPlayerSnapshot {
         }
 
         return false;
+    }
+
+    /**
+     * Drops the snapshot for a world, for when it is unloaded.
+     *
+     * @param world The world to forget
+     */
+    public static void forget(World world) {
+        SNAPSHOTS.remove(world.getUID());
+    }
+
+    /**
+     * Drops every snapshot. Called from the plugin's cache clearing on reload; the next check for a world
+     * simply builds a new snapshot for it.
+     */
+    public static void clear() {
+        SNAPSHOTS.clear();
     }
 
     private double[] getPositions(World world) {

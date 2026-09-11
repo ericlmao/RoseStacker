@@ -571,6 +571,29 @@ public final class ItemUtils {
     }
 
     /**
+     * Re-reads whether a player is holding the stacking tool from their main hand. Must run on the player's
+     * own thread.
+     *
+     * @param player The player
+     */
+    public static void refreshHoldingStackingTool(Player player) {
+        setHoldingStackingTool(player.getUniqueId(), isStackingTool(player.getInventory().getItemInMainHand()));
+    }
+
+    /**
+     * Re-reads the held item of every online player.
+     * <p>
+     * {@link #clearCache()} empties the holder set on a reload, because the tool definition it was filled
+     * against may have changed, and only the held-item events refill it. Without this a player who was
+     * holding the tool across a reload would keep their stack particles until they next touched their
+     * hotbar. Must run on the main thread.
+     */
+    public static void seedStackingToolHolders() {
+        for (Player player : Bukkit.getOnlinePlayers())
+            refreshHoldingStackingTool(player);
+    }
+
+    /**
      * @param playerId The player
      * @return true if the player was last seen holding the stacking tool, otherwise false
      */
