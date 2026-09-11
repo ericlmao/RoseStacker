@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
@@ -36,7 +37,16 @@ public final class EntityUtils {
 
     private static final boolean HAS_FROM_MOB_SPAWNER = NMSUtil.isPaper() && NMSUtil.getVersionNumber() >= 19;
     private static final Random RANDOM = new Random();
-    private static Map<EntityType, BoundingBox> cachedBoundingBoxes;
+    /** The bounding box of each entity type at the origin, before it gets shifted onto a location */
+    private static final Map<EntityType, BoundingBox> CACHED_BOUNDING_BOXES = new ConcurrentHashMap<>();
+    /**
+     * The same boxes, already shrunk by the margin the intersecting-block walk uses, flattened to
+     * {minX, minY, minZ, maxX, maxY, maxZ}. Spawn conditions walk these blocks for every spawn attempt,
+     * which used to clone, shift and expand a BoundingBox and allocate a Location per check.
+     */
+    private static final Map<EntityType, double[]> CACHED_SHRUNK_BOUNDS = new ConcurrentHashMap<>();
+    /** How far the intersecting-block walk shrinks an entity's bounding box before walking it */
+    private static final double INTERSECTION_MARGIN = 0.1;
 
     /**
      * Get loot for a given entity
@@ -209,14 +219,18 @@ public final class EntityUtils {
      * @return true if every block was visited, false if the consumer stopped the walk early
      */
     private static boolean forEachIntersectingBlock(EntityType entityType, Location location, World world, IntersectingBlockConsumer consumer) {
-        BoundingBox bounds = getBoundingBox(entityType, location).expand(-0.1);
+        // An entity type's bounds never change, so the shrunk box is computed once per type and the block
+        // range is plain arithmetic on the location from there. This used to clone, shift and expand a
+        // BoundingBox and allocate a Location for the shift on every call.
+        double[] bounds = getShrunkBounds(entityType, world);
+        double originX = location.getX() - 0.5, originY = location.getY(), originZ = location.getZ() - 0.5;
 
-        int minX = floorCoordinate(bounds.getMinX());
-        int maxX = floorCoordinate(bounds.getMaxX());
-        int minY = floorCoordinate(bounds.getMinY());
-        int maxY = floorCoordinate(bounds.getMaxY());
-        int minZ = floorCoordinate(bounds.getMinZ());
-        int maxZ = floorCoordinate(bounds.getMaxZ());
+        int minX = floorCoordinate(originX + bounds[0]);
+        int maxX = floorCoordinate(originX + bounds[3]);
+        int minY = floorCoordinate(originY + bounds[1]);
+        int maxY = floorCoordinate(originY + bounds[4]);
+        int minZ = floorCoordinate(originZ + bounds[2]);
+        int maxZ = floorCoordinate(originZ + bounds[5]);
 
         int minHeight = world.getMinHeight();
         int maxHeight = world.getMaxHeight();
@@ -390,35 +404,67 @@ public final class EntityUtils {
      * @return A bounding box for the entity type at the location
      */
     public static BoundingBox getBoundingBox(EntityType entityType, Location location) {
-        if (cachedBoundingBoxes == null)
-            cachedBoundingBoxes = new HashMap<>();
+        BoundingBox baseBoundingBox = getBaseBoundingBox(entityType, location.getWorld());
+        BoundingBox boundingBox = baseBoundingBox == null ? new BoundingBox() : baseBoundingBox.clone();
+        boundingBox.shift(location.getX() - 0.5, location.getY(), location.getZ() - 0.5);
+        return boundingBox;
+    }
 
-        if (entityType == EntityType.SLIME || entityType == EntityType.MAGMA_CUBE)
-            return new BoundingBox(-2.1, 0, -2.1, 2.1, 2.1, 2.1).shift(location.clone().subtract(0.5, 0, 0.5));
+    /**
+     * Gets the bounding box an entity type would have at the origin, ready to be shifted onto a location.
+     *
+     * @param entityType The entity type the entity would be
+     * @param world The world the entity would be created in, only used the first time a type is seen
+     * @return the shared base bounding box for the entity type, or null if one could not be determined
+     * @implNote The returned box is shared with every other caller and must not be modified.
+     */
+    private static BoundingBox getBaseBoundingBox(EntityType entityType, World world) {
+        BoundingBox boundingBox = CACHED_BOUNDING_BOXES.get(entityType);
+        if (boundingBox != null)
+            return boundingBox;
 
-        BoundingBox boundingBox = cachedBoundingBoxes.get(entityType);
-        if (boundingBox == null) {
-            if (entityType == EntityType.ENDER_DRAGON) {
-                boundingBox = new BoundingBox(-4, 0, -4, 4, 8, 4);
-            } else {
-                LivingEntity entity = null;
-                try {
-                    entity = NMSAdapter.getHandler().createNewEntityUnspawned(entityType, new Location(location.getWorld(), 0, 0, 0), CreatureSpawnEvent.SpawnReason.CUSTOM);
-                } catch (Exception ignored) { }
+        if (entityType == EntityType.SLIME || entityType == EntityType.MAGMA_CUBE) {
+            boundingBox = new BoundingBox(-2.1, 0, -2.1, 2.1, 2.1, 2.1);
+        } else if (entityType == EntityType.ENDER_DRAGON) {
+            boundingBox = new BoundingBox(-4, 0, -4, 4, 8, 4);
+        } else {
+            LivingEntity entity = null;
+            try {
+                entity = NMSAdapter.getHandler().createNewEntityUnspawned(entityType, new Location(world, 0, 0, 0), CreatureSpawnEvent.SpawnReason.CUSTOM);
+            } catch (Exception ignored) { }
 
-                if (entity != null) {
-                    boundingBox = entity.getBoundingBox();
-                    cachedBoundingBoxes.put(entityType, boundingBox);
-                } else {
-                    // This should never happen unless the entity type is not a LivingEntity
-                    boundingBox = new BoundingBox();
-                }
-            }
+            // This should never happen unless the entity type is not a LivingEntity. Don't cache the
+            // failure, the entity may simply not have been creatable yet.
+            if (entity == null)
+                return null;
+
+            boundingBox = entity.getBoundingBox();
         }
 
-        boundingBox = boundingBox.clone();
-        boundingBox.shift(location.clone().subtract(0.5, 0, 0.5));
+        CACHED_BOUNDING_BOXES.put(entityType, boundingBox);
         return boundingBox;
+    }
+
+    /**
+     * @return the bounds of an entity type at the origin, already shrunk by the intersection margin,
+     *         as {minX, minY, minZ, maxX, maxY, maxZ}
+     * @implNote The returned array is shared with every other caller and must not be modified.
+     */
+    private static double[] getShrunkBounds(EntityType entityType, World world) {
+        double[] bounds = CACHED_SHRUNK_BOUNDS.get(entityType);
+        if (bounds != null)
+            return bounds;
+
+        BoundingBox baseBoundingBox = getBaseBoundingBox(entityType, world);
+        // BoundingBox#expand collapses a box that is thinner than the margin onto its center rather than
+        // inverting it, so let it do the shrinking once instead of reimplementing that here
+        BoundingBox shrunk = (baseBoundingBox == null ? new BoundingBox() : baseBoundingBox.clone()).expand(-INTERSECTION_MARGIN);
+        bounds = new double[] { shrunk.getMinX(), shrunk.getMinY(), shrunk.getMinZ(), shrunk.getMaxX(), shrunk.getMaxY(), shrunk.getMaxZ() };
+
+        if (baseBoundingBox != null)
+            CACHED_SHRUNK_BOUNDS.put(entityType, bounds);
+
+        return bounds;
     }
 
     private static int floorCoordinate(double value) {
@@ -427,7 +473,8 @@ public final class EntityUtils {
     }
 
     public static void clearCache() {
-        cachedBoundingBoxes = null;
+        CACHED_BOUNDING_BOXES.clear();
+        CACHED_SHRUNK_BOUNDS.clear();
     }
 
 }
