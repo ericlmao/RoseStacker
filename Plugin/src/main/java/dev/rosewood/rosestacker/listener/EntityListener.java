@@ -329,6 +329,11 @@ public class EntityListener implements Listener {
         // that died; simple storage falls back to the entity-based path, which it pays nothing extra for
         List<LivingEntity> killedEntities = stackedEntity.getDataStorage().damageAll(damage);
 
+        // The stored health was edited behind the stack's back, which changes neither its modified tick nor
+        // its size, so the autosave pass would skip it and the new health would only reach disk if something
+        // else touched the stack before the server stopped
+        stackedEntity.markStorageModified();
+
         // Only try dropping loot if something actually died
         if (!killedEntities.isEmpty()) {
             stackedEntity.dropPartialStackLoot(killedEntities);

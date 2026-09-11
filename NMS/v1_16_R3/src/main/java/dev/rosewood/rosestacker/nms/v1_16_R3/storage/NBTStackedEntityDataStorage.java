@@ -368,9 +368,13 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
             // One entity built from the base tells us the health they would have had; each of them picks up a
             // health value of its own below, so this is needed at most once per stack.
             Float cloneHealth = null;
-            Iterator<NBTTagCompound> iterator = this.data.iterator();
-            while (iterator.hasNext()) {
-                NBTTagCompound compoundTag = iterator.next();
+            // Stored tags are handed out by reference to readers that do their work outside this lock
+            // (isHeadRepresentative, getAll, serialize and forEachCapped all snapshot references under it and
+            // read them afterwards), so a survivor gets a copy carrying its new health instead of having its
+            // health rewritten underneath whoever is still reading the old one. The deque is refilled with
+            // the copies, which is also what drops the entries that died.
+            List<NBTTagCompound> survivors = new ArrayList<>(this.data.size());
+            for (NBTTagCompound compoundTag : this.data) {
                 float health;
                 if (compoundTag.hasKey("Health")) {
                     health = compoundTag.getFloat("Health");
@@ -385,12 +389,15 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
                 if (health - damage <= 0) {
                     // Don't set the health below 0, as that will trigger the death event which we want to avoid
                     killedTags.add(compoundTag);
-                    iterator.remove();
                 } else {
-                    compoundTag.setFloat("Health", (float) (health - damage));
+                    NBTTagCompound survivor = compoundTag.clone();
+                    survivor.setFloat("Health", (float) (health - damage));
+                    survivors.add(survivor);
                 }
             }
 
+            this.data.clear();
+            this.data.addAll(survivors);
             this.size = this.data.size();
         }
 

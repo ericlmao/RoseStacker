@@ -362,6 +362,16 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     }
 
     /**
+     * Records that something changed the contents of this stack's data storage directly, without going
+     * through the stack. The autosave pass decides what to write from {@link #needsSave()}, which compares
+     * the modified tick and the stack size, so an edit that changes neither (shared damage rewriting the
+     * stored health, for example) is invisible to it unless it is reported here.
+     */
+    public void markStorageModified() {
+        this.markModified();
+    }
+
+    /**
      * Drops all loot and experience for all internally-stacked entities.
      * Does not include loot for the current entity.
      *
