@@ -254,7 +254,7 @@ public final class EntityUtils {
                     // Out of build bounds and unloaded chunks both read as air, matching getLazyBlockMaterial
                     Material type = chunk == null || y < minHeight || y >= maxHeight
                             ? Material.AIR
-                            : chunk.getBlock(x & 15, y, z & 15).getType();
+                            : readBlockType(chunk, x, y, z);
                     if (!consumer.accept(x, y, z, type))
                         return false;
                 }
@@ -286,7 +286,27 @@ public final class EntityUtils {
         if (chunk == null)
             return Material.AIR;
 
-        return chunk.getBlock(x & 15, y, z & 15).getType();
+        return readBlockType(chunk, x, y, z);
+    }
+
+    /**
+     * Reads one block type out of an already loaded chunk.
+     * <p>
+     * With misc-settings.async-display-updates enabled, the nametag and hologram wall checks call this from
+     * the display threads, so a read can land while the server is resizing a section's palette or swapping
+     * its block storage. Those states are transient and they throw rather than hand back a wrong block, so
+     * a failed read reports the block as air, which is the same thing an unloaded chunk reports and simply
+     * treats the block as passable. Aborting the whole pass over one block instead would cost every stack
+     * behind it its nametag update; the next check a few cycles later reads the settled block.
+     *
+     * @return the block's type, or air if the block could not be read
+     */
+    private static Material readBlockType(Chunk chunk, int x, int y, int z) {
+        try {
+            return chunk.getBlock(x & 15, y, z & 15).getType();
+        } catch (RuntimeException e) {
+            return Material.AIR;
+        }
     }
 
     /**
@@ -345,7 +365,7 @@ public final class EntityUtils {
                 // Unloaded chunks and out-of-bounds coordinates read as air, matching getLazyBlockMaterial
                 Material type = chunk == null || blockY < minHeight || blockY >= maxHeight
                         ? Material.AIR
-                        : chunk.getBlock(blockX & 15, blockY, blockZ & 15).getType();
+                        : readBlockType(chunk, blockX, blockY, blockZ);
                 if (type.isSolid() && (!requireOccluding || StackerUtils.isOccluding(type)))
                     return false;
             }
