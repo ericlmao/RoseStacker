@@ -5,7 +5,6 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import dev.rosewood.rosegarden.utils.EntitySpawnUtil;
 import dev.rosewood.rosegarden.utils.NMSUtil;
-import dev.rosewood.rosegarden.utils.StringPlaceholders;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.api.RoseStackerAPI;
 import dev.rosewood.rosestacker.config.SettingKey;
@@ -14,7 +13,6 @@ import dev.rosewood.rosestacker.event.EntityStackMultipleDeathEvent.EntityDrops;
 import dev.rosewood.rosestacker.hook.SpawnerFlagPersistenceHook;
 import dev.rosewood.rosestacker.hook.WorldGuardHook;
 import dev.rosewood.rosestacker.manager.EntityCacheManager;
-import dev.rosewood.rosestacker.manager.LocaleManager;
 import dev.rosewood.rosestacker.manager.StackManager;
 import dev.rosewood.rosestacker.manager.StackSettingManager;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
@@ -36,6 +34,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
@@ -80,6 +79,32 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     private double x, y, z;
     private int lastModifiedTicks;
 
+    // Persistent data container flags, read once and kept here. The stacking conditions consult these for
+    // every candidate pair of every stacking pass, and a container lookup is a map lookup plus two string
+    // builds. The setters in PersistentDataUtils clear these through the stack, and they are dropped
+    // whenever the head entity is replaced, so a stale value cannot survive a chunk unload cycle either.
+    private volatile Boolean spawnedFromSpawner;
+    private volatile Boolean spawnedFromTrialSpawner;
+    private volatile Boolean spawnedFromDispenser;
+    private volatile Boolean unstackable;
+    private volatile Boolean aiDisabled;
+
+    // The players whose client currently has this entity, maintained by EntityTrackingListener. The
+    // nametag pass used to schedule a main-thread task per stack purely so it could call
+    // Entity#getTrackedBy() on the right thread; owning the set means it never has to.
+    private volatile Set<UUID> trackingPlayers;
+
+    // Unstack pass bookkeeping; see needsUnstackCheck()
+    private int lastUnstackCheckModifiedTicks = Integer.MIN_VALUE;
+    private int unstackCheckIdleCycles;
+
+    // Autosave bookkeeping; see needsSave()
+    private int lastSavedModifiedTicks = Integer.MIN_VALUE;
+    private int lastSavedStackSize = -1;
+
+    // Set while a freshly created stack is being instant-stacked, before its entity is valid
+    private volatile boolean newlyCreated;
+
     // The nametag state each tracking player last received, so periodic nametag passes only send a packet
     // when the name or visibility actually changed for that player. Created lazily; most stacks never have
     // a player near them. Entries are dropped when a player stops tracking the entity (see
@@ -88,6 +113,16 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
     // Without track/untrack events we cannot tell when a client dropped our tag, so fall back to resending
     private static volatile boolean nametagStateTrackingEnabled = true;
+
+    // Whether display updates may be built and sent from the async passes instead of a main-thread task
+    private static volatile boolean asyncDisplayUpdates;
+
+    /**
+     * An idle stack is re-checked by the unstack pass this many cycles apart even when nothing has touched
+     * it, so a stack that somehow mutated without bumping its modified tick cannot get stuck stacked
+     * forever. At the default unstack frequency of 50 ticks that is a worst case of 10 seconds.
+     */
+    private static final int IDLE_UNSTACK_RECHECK_CYCLES = 4;
 
     /**
      * A player and a stack that both stand still can only have the wall between them change when blocks
@@ -103,6 +138,34 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         nametagStateTrackingEnabled = enabled;
     }
 
+    /**
+     * @return true if the per-player nametag state is being tracked, otherwise false
+     */
+    public static boolean isNametagStateTrackingEnabled() {
+        return nametagStateTrackingEnabled;
+    }
+
+    /**
+     * Sets whether display updates may be sent from the async passes.
+     *
+     * @param enabled true to send display updates off the main thread, otherwise false
+     */
+    public static void setAsyncDisplayUpdates(boolean enabled) {
+        asyncDisplayUpdates = enabled;
+    }
+
+    /**
+     * Nametags are per-player metadata packets, which Paper is happy to have queued from any thread. Doing
+     * that instead of scheduling a task per (stack, player) pair is what takes the nametag pass off the
+     * main thread entirely. It requires the track/untrack events, because without them we have no
+     * off-thread way to know which clients actually have the entity.
+     *
+     * @return true if display updates should be built and sent on whichever thread asks for them
+     */
+    public static boolean isAsyncDisplayUpdates() {
+        return asyncDisplayUpdates && nametagStateTrackingEnabled;
+    }
+
     private EntityStackSettings stackSettings;
 
     public StackedEntity(LivingEntity entity, StackedEntityDataStorage stackedEntityDataStorage, boolean updateDisplay) {
@@ -116,6 +179,13 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         if (this.entity != null) {
             this.stackSettings = RoseStacker.getInstance().getManager(StackSettingManager.class).getEntityStackSettings(this.entity);
+
+            // An entity can already be tracked by players before it becomes a stack, on chunk load or on a
+            // plugin reload. The track events only fire on a change, so seed the set here when we are on a
+            // thread that may read it; otherwise it stays empty until the next track event fills it.
+            if (isAsyncDisplayUpdates() && this.entity.isValid() && ThreadUtils.isEntityThread(this.entity))
+                this.seedTrackingPlayers();
+
             if (updateDisplay)
                 this.updateDisplaySafely();
         }
@@ -152,6 +222,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             return;
 
         this.entity = entity;
+        this.onEntityReplaced();
         this.stackedEntityDataStorage.updateEntity(entity);
         this.resetHasMoved();
         this.updateDisplaySafely();
@@ -213,6 +284,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         stackManager.setEntityStackingTemporarilyDisabled(true);
         this.entity = this.stackedEntityDataStorage.pop().createEntity(oldEntity.getLocation(), true, oldEntity.getType());
+        this.onEntityReplaced();
         stackManager.setEntityStackingTemporarilyDisabled(false);
         this.stackSettings.applyUnstackProperties(this.entity, oldEntity);
         stackManager.updateStackedEntityKey(oldEntity, this);
@@ -474,7 +546,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             entityKillCount = stackEntities.size() + (mainEntityDrops != null ? 1 : 0);
 
         boolean propagateKiller = SettingKey.ENTITY_LOOT_PROPAGATE_KILLER.get();
-        boolean fromSpawner = PersistentDataUtils.isSpawnedFromSpawner(this.entity);
+        boolean fromSpawner = this.isSpawnedFromSpawner();
         Location location = mainEntity.getLocation();
         Player killer = propagateKiller ? mainEntity.getKiller() : null;
         Entity froglightKiller = NMSUtil.getVersionNumber() >= 19 && mainEntity.getType() == EntityType.MAGMA_CUBE && mainEntity.getLastDamageCause() instanceof EntityDamageByEntityEvent damageEvent && damageEvent.getDamager().getType() == EntityType.FROG ? damageEvent.getDamager() : null;
@@ -618,7 +690,13 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         // against the entity it was copied from, so compare the stack against itself instead. The
         // conditions then take their entity1 == entity2 path, which the stacking code already relies on
         // when looking for a stack to merge into, and reach the same verdict.
-        if (this.stackedEntityDataStorage.getType() == StackedEntityDataStorageType.SIMPLE)
+        //
+        // NBT storage reaches the same place whenever the entry at the front of the storage carries nothing
+        // that a stack condition could read differently from the head entity, which is the normal shape of
+        // a spawner-fed farm stack: the members are clones that differ only in health, attributes and
+        // equipment, all of which the storage strips into its shared base tag anyway.
+        if (this.stackedEntityDataStorage.getType() == StackedEntityDataStorageType.SIMPLE
+                || this.stackedEntityDataStorage.isHeadRepresentative())
             return this.stackSettings.testCanStackWith(this, this, true);
 
         // The wrapper around the deserialized copy only exists so the conditions can read getEntity() and
@@ -641,6 +719,94 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         return this.entity.getLocation();
     }
 
+    /**
+     * @return true if the head entity was spawned from a spawner, otherwise false
+     */
+    public boolean isSpawnedFromSpawner() {
+        Boolean value = this.spawnedFromSpawner;
+        if (value != null)
+            return value;
+
+        boolean spawnedFromSpawner = PersistentDataUtils.isSpawnedFromSpawner(this.entity);
+        // Half of this answer is the entity's spawn reason, which is only set once the entity has been
+        // added to the world, so an answer computed before that is not worth remembering
+        if (this.entity.isValid())
+            this.spawnedFromSpawner = spawnedFromSpawner;
+        return spawnedFromSpawner;
+    }
+
+    /**
+     * @return true if the head entity was spawned from a trial spawner, otherwise false
+     */
+    public boolean isSpawnedFromTrialSpawner() {
+        Boolean value = this.spawnedFromTrialSpawner;
+        if (value != null)
+            return value;
+
+        boolean spawnedFromTrialSpawner = PersistentDataUtils.isSpawnedFromTrialSpawner(this.entity);
+        if (this.entity.isValid()) // Same spawn reason caveat as isSpawnedFromSpawner
+            this.spawnedFromTrialSpawner = spawnedFromTrialSpawner;
+        return spawnedFromTrialSpawner;
+    }
+
+    /**
+     * @return true if the head entity was spawned from a spawn egg in a dispenser, otherwise false
+     */
+    public boolean isSpawnedFromDispenser() {
+        Boolean value = this.spawnedFromDispenser;
+        if (value == null)
+            this.spawnedFromDispenser = value = PersistentDataUtils.isSpawnedFromDispenser(this.entity);
+        return value;
+    }
+
+    /**
+     * @return true if the head entity is marked unstackable, otherwise false
+     */
+    public boolean isUnstackable() {
+        Boolean value = this.unstackable;
+        if (value == null)
+            this.unstackable = value = PersistentDataUtils.isUnstackable(this.entity);
+        return value;
+    }
+
+    /**
+     * @return true if the head entity has its AI disabled, otherwise false
+     */
+    public boolean isAiDisabled() {
+        Boolean value = this.aiDisabled;
+        if (value == null)
+            this.aiDisabled = value = PersistentDataUtils.isAiDisabled(this.entity);
+        return value;
+    }
+
+    /**
+     * Drops everything that was about the previous head entity after it has been swapped out: the cached
+     * container flags, whatever each client was last sent (their client has a different entity now) and
+     * the tracked player set, which is refilled by the track events for the new entity.
+     */
+    private void onEntityReplaced() {
+        this.invalidateCachedFlags();
+        this.clearNametagStates();
+
+        Set<UUID> tracking = this.trackingPlayers;
+        if (tracking != null)
+            tracking.clear();
+
+        if (isAsyncDisplayUpdates() && this.entity != null && this.entity.isValid() && ThreadUtils.isEntityThread(this.entity))
+            this.seedTrackingPlayers();
+    }
+
+    /**
+     * Forgets every cached persistent data container flag so the next read goes back to the container.
+     */
+    public void invalidateCachedFlags() {
+        this.spawnedFromSpawner = null;
+        this.spawnedFromTrialSpawner = null;
+        this.spawnedFromDispenser = null;
+        this.unstackable = null;
+        this.aiDisabled = null;
+    }
+
     public String getDisplayName() {
         if (this.displayName != null)
             return this.displayName;
@@ -657,17 +823,10 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         String customName = this.entity.getCustomName();
         if (this.getStackSize() > 1 || SettingKey.ENTITY_DISPLAY_TAGS_SINGLE.get()) {
-            String displayString;
-            StringPlaceholders.Builder placeholders = StringPlaceholders.builder("amount", StackerUtils.formatNumber(this.getStackSize()));
-            //NPCsHook.addCustomPlaceholders(this.entity, placeholders);
-
-            if (customName != null && SettingKey.ENTITY_DISPLAY_TAGS_CUSTOM_NAME.get()) {
-                placeholders.add("name", customName);
-                displayString = RoseStacker.getInstance().getManager(LocaleManager.class).getLocaleMessage("entity-stack-display-custom-name", placeholders.build());
-            } else {
-                placeholders.add("name", this.stackSettings.getDisplayName());
-                displayString = RoseStacker.getInstance().getManager(LocaleManager.class).getLocaleMessage("entity-stack-display", placeholders.build());
-            }
+            // The string only depends on the stack size and the custom name, and both repeat across
+            // thousands of stacks, so the settings for this entity type hold the finished strings
+            boolean useCustomName = customName != null && SettingKey.ENTITY_DISPLAY_TAGS_CUSTOM_NAME.get();
+            String displayString = this.stackSettings.getStackDisplayString(this.getStackSize(), useCustomName ? customName : null);
 
             this.displayNameVisible = !SettingKey.ENTITY_DISPLAY_TAGS_HOVER.get();
             return this.displayName = displayString;
@@ -693,6 +852,18 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         // Only the players whose client actually has this entity can see the tag; anyone else gets the
         // correct tag from the nametag pass once they start tracking it. This replaces a loop over every
         // online player that scheduled a task per player just to distance-check them.
+        if (isAsyncDisplayUpdates()) {
+            for (UUID playerId : this.getTrackingPlayers()) {
+                if (!this.markNametagSent(playerId, displayName, displayNameVisible))
+                    continue;
+
+                Player player = Bukkit.getPlayer(playerId);
+                if (player != null && player.isValid())
+                    NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, this.entity, displayName, displayNameVisible);
+            }
+            return;
+        }
+
         for (Player player : this.entity.getTrackedBy()) {
             if (!this.markNametagSent(player.getUniqueId(), displayName, displayNameVisible))
                 continue;
@@ -810,7 +981,8 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
     /**
      * What one player last received for this stack, and the last wall check run for them. Only ever
-     * touched from the stack entity's own thread, so the fields are plain.
+     * touched from whichever thread is updating this stack's display, so the fields are plain; the worst a
+     * concurrent update can cost is a nametag packet sent twice or one cycle late.
      */
     private static final class NametagState {
 
@@ -826,10 +998,120 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
     }
 
+    /**
+     * Records that a player's client now has this entity.
+     *
+     * @param playerId The player that started tracking this entity
+     */
+    public void addTrackingPlayer(UUID playerId) {
+        Set<UUID> tracking = this.trackingPlayers;
+        if (tracking == null) {
+            synchronized (this) {
+                tracking = this.trackingPlayers;
+                if (tracking == null)
+                    this.trackingPlayers = tracking = ConcurrentHashMap.newKeySet(4);
+            }
+        }
+
+        tracking.add(playerId);
+    }
+
+    /**
+     * Records that a player's client no longer has this entity.
+     *
+     * @param playerId The player that stopped tracking this entity
+     */
+    public void removeTrackingPlayer(UUID playerId) {
+        Set<UUID> tracking = this.trackingPlayers;
+        if (tracking != null)
+            tracking.remove(playerId);
+    }
+
+    /**
+     * @return the players whose client currently has this entity, never null
+     */
+    public Set<UUID> getTrackingPlayers() {
+        Set<UUID> tracking = this.trackingPlayers;
+        return tracking != null ? tracking : Set.of();
+    }
+
+    /**
+     * Fills the tracked player set from the entity itself. Must only be called on the entity's thread.
+     */
+    public void seedTrackingPlayers() {
+        for (Player player : this.entity.getTrackedBy())
+            this.addTrackingPlayer(player.getUniqueId());
+    }
+
+    /**
+     * Decides whether the unstack pass needs to look at this stack this cycle.
+     * <p>
+     * Everything the unstack check consults about a stack changes through the stack itself, which bumps the
+     * modified tick, so a stack that has not been touched since the last check will reach the same verdict
+     * it reached last time. Checking it anyway costs a materialized entity per stack per cycle on NBT
+     * storage, which for an idle spawner farm is the whole cost of the pass. Idle stacks are still
+     * re-checked every {@link #IDLE_UNSTACK_RECHECK_CYCLES} cycles so nothing can get stuck.
+     *
+     * @return true if this stack should be checked, otherwise false
+     */
+    public boolean needsUnstackCheck() {
+        if (this.lastModifiedTicks == this.lastUnstackCheckModifiedTicks
+                && ++this.unstackCheckIdleCycles < IDLE_UNSTACK_RECHECK_CYCLES)
+            return false;
+
+        this.lastUnstackCheckModifiedTicks = this.lastModifiedTicks;
+        this.unstackCheckIdleCycles = 0;
+        return true;
+    }
+
+    /**
+     * Checks whether anything has changed since the last time this stack was written to its entity.
+     * <p>
+     * The stack size is compared as well as the modified tick, so a storage mutation that went around
+     * {@link #markModified()} still counts as a change.
+     *
+     * @return true if this stack has changed since it was last saved, otherwise false
+     */
+    public boolean needsSave() {
+        return this.lastModifiedTicks != this.lastSavedModifiedTicks || this.getStackSize() != this.lastSavedStackSize;
+    }
+
+    /**
+     * Records that this stack has just been written to its entity.
+     */
+    public void markSaved() {
+        this.lastSavedModifiedTicks = this.lastModifiedTicks;
+        this.lastSavedStackSize = this.getStackSize();
+    }
+
+    /**
+     * @return true if this stack was just created and its entity has not finished spawning yet
+     */
+    public boolean isNewlyCreated() {
+        return this.newlyCreated;
+    }
+
+    /**
+     * Marks this stack as freshly created, so the stacking pass does not mistake an entity that has not
+     * finished spawning for one that has been removed.
+     *
+     * @param newlyCreated true while the stack is being created, otherwise false
+     */
+    public void setNewlyCreated(boolean newlyCreated) {
+        this.newlyCreated = newlyCreated;
+    }
+
     @Override
     public void updateDisplaySafely() {
         if (this.entity == null)
             return;
+
+        // The display update only reads the stack and sends per-player packets, so on Paper it does not
+        // need the entity's thread at all; this used to schedule a task on every single stack size change
+        if (isAsyncDisplayUpdates()) {
+            this.updateDisplay();
+            return;
+        }
 
         ThreadUtils.runOnEntity(this.entity, this::updateDisplay);
     }
@@ -874,7 +1156,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             overrideKiller = this.entity.getKiller();
 
         return this.stackSettings.shouldKillEntireStackOnDeath()
-                || (SettingKey.SPAWNER_DISABLE_MOB_AI_OPTIONS_KILL_ENTIRE_STACK_ON_DEATH.get() && PersistentDataUtils.isAiDisabled(this.entity))
+                || (SettingKey.SPAWNER_DISABLE_MOB_AI_OPTIONS_KILL_ENTIRE_STACK_ON_DEATH.get() && this.isAiDisabled())
                 || (lastDamageCause != null && SettingKey.ENTITY_KILL_ENTIRE_STACK_CONDITIONS.get().stream().anyMatch(x -> x.equalsIgnoreCase(lastDamageCause.getCause().name())))
                 || (overrideKiller != null && SettingKey.ENTITY_KILL_ENTIRE_STACK_ON_DEATH_PERMISSION.get() && overrideKiller.hasPermission("rosestacker.killentirestack"));
     }

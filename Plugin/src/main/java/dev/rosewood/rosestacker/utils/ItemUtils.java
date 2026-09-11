@@ -27,7 +27,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -457,6 +459,9 @@ public final class ItemUtils {
         return item;
     }
 
+    // Players last seen holding the stacking tool, maintained by EntityTrackingListener
+    private static final Set<UUID> stackingToolHolders = ConcurrentHashMap.newKeySet();
+
     public static boolean isStackingTool(ItemStack item) {
         return getStackingTool().isSimilar(item);
     }
@@ -547,9 +552,45 @@ public final class ItemUtils {
         return itemStackAmounts;
     }
 
+    /**
+     * Records whether a player is currently holding the stacking tool.
+     * <p>
+     * The nametag pass needs this to decide whether to show the stacking tool particles, and it used to
+     * schedule a main-thread task per online player per cycle just to read the held item. Maintaining the
+     * flag from the events that can change it means the pass can read it off-thread instead.
+     *
+     * @param playerId The player
+     * @param holding true if the player is holding the stacking tool, otherwise false
+     */
+    public static void setHoldingStackingTool(UUID playerId, boolean holding) {
+        if (holding) {
+            stackingToolHolders.add(playerId);
+        } else {
+            stackingToolHolders.remove(playerId);
+        }
+    }
+
+    /**
+     * @param playerId The player
+     * @return true if the player was last seen holding the stacking tool, otherwise false
+     */
+    public static boolean isHoldingStackingTool(UUID playerId) {
+        return stackingToolHolders.contains(playerId);
+    }
+
+    /**
+     * Forgets whether a player was holding the stacking tool.
+     *
+     * @param playerId The player
+     */
+    public static void forgetStackingToolHolder(UUID playerId) {
+        stackingToolHolders.remove(playerId);
+    }
+
     public static void clearCache() {
         skullCache.clear();
         cachedStackingTool = null;
+        stackingToolHolders.clear(); // The tool definition may have changed; the holding events will refill this
     }
 
 }

@@ -1,7 +1,5 @@
 package dev.rosewood.rosestacker.stack;
 
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import dev.rosewood.rosegarden.RosePlugin;
 import dev.rosewood.rosegarden.compatibility.CompatibilityAdapter;
 import dev.rosewood.rosegarden.scheduler.task.ScheduledTask;
@@ -23,6 +21,7 @@ import dev.rosewood.rosestacker.nms.storage.EntityDataEntry;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorage;
 import dev.rosewood.rosestacker.stack.settings.EntityStackSettings;
 import dev.rosewood.rosestacker.stack.settings.ItemStackSettings;
+import dev.rosewood.rosestacker.utils.BatchedMainThreadExecutor;
 import dev.rosewood.rosestacker.utils.DataUtils;
 import dev.rosewood.rosestacker.utils.EntityUtils;
 import dev.rosewood.rosestacker.utils.ItemUtils;
@@ -43,9 +42,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
@@ -62,14 +59,38 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.util.Vector;
 
 public class StackingThread implements StackingLogic, AutoCloseable {
 
-    private final static String NEW_METADATA = "RS_new";
+    /**
+     * How long a removed entity is remembered for, so a stack whose entity was removed on another thread is
+     * not resurrected by a pass that is already holding a reference to it.
+     */
+    private final static long REMOVED_ENTITY_MEMORY_MS = 5000L;
 
-    private final static Cache<UUID, Boolean> REMOVED_ENTITIES = CacheBuilder.newBuilder().expireAfterWrite(5, TimeUnit.SECONDS).build();
+    /**
+     * How many stacks one batched main-thread job handles. Small enough that the executor's per-tick budget
+     * can take effect between jobs, large enough that the per-job overhead is amortized away.
+     */
+    private final static int MAIN_THREAD_BATCH_SIZE = 64;
+
+    private final static Predicate<Entity> ITEM_PREDICATE = x -> x.getType() == VersionUtils.ITEM;
+
+    /**
+     * Paper exposes whether an entity is inside the tick range of a player. Looked up once so the unstack
+     * pass can skip entities that cannot have changed, while still running on Spigot without it.
+     */
+    private final static boolean IS_TICKING_SUPPORTED = isTickingSupported();
+
+    private static boolean isTickingSupported() {
+        try {
+            Entity.class.getMethod("isTicking");
+            return true;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
+    }
 
     private final RosePlugin rosePlugin;
     private final StackManager stackManager;
@@ -80,6 +101,10 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
     private ScheduledTask entityStackTask, itemStackTask, nametagTask, hologramTask;
     private ScheduledTask entityUnstackTask, entityCleanupTask, entityTtlTask;
+
+    // Replaces a Guava cache that read System.nanoTime() on every access, including from the per-entity
+    // culls that run thousands of times a cycle. Pruned by the passes below.
+    private final Map<UUID, Long> removedEntities;
 
     private final Map<UUID, StackedEntity> stackedEntities;
     private final Map<UUID, StackedItem> stackedItems;
@@ -124,6 +149,7 @@ public class StackingThread implements StackingLogic, AutoCloseable {
                 this.entityTtlTask = rosePlugin.getScheduler().runTaskTimer(this::cleanupExpiredEntityStacks, 5L, Math.min(entityStackTtl, 20L));
         }
 
+        this.removedEntities = new ConcurrentHashMap<>();
         this.stackedEntities = new ConcurrentHashMap<>();
         this.stackedItems = new ConcurrentHashMap<>();
         this.stackChunkData = new ConcurrentHashMap<>();
@@ -167,21 +193,59 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
         this.stackingEntities = true;
         try {
+            this.pruneRemovedEntities();
+
+            boolean needsEntityThread = SettingKey.ENTITY_REQUIRE_LINE_OF_SIGHT.get() || SettingKey.ENTITY_DONT_STACK_IF_IN_WATER.get();
+            List<StackedEntity> pending = null;
             for (StackedEntity stackedEntity : this.stackedEntities.values()) {
-                LivingEntity livingEntity = stackedEntity.getEntity();
-                if (this.isRemoved(livingEntity)) {
+                if (this.isRemoved(stackedEntity)) {
                     this.removeEntityStack(stackedEntity);
                     continue;
                 }
 
-                if (SettingKey.ENTITY_REQUIRE_LINE_OF_SIGHT.get() || SettingKey.ENTITY_DONT_STACK_IF_IN_WATER.get()) {
-                    ThreadUtils.runOnEntity(livingEntity, () -> this.tryStackEntity(stackedEntity));
-                } else {
-                    this.tryStackEntity(stackedEntity);
+                // Every cheap cull runs here, off-thread. The overwhelming majority of stacks fail one of
+                // them - AI-disabled farm mobs never move, so hasMoved() alone rejects nearly all of them -
+                // and scheduling a main-thread task per stack only to return immediately was a burst of
+                // thousands of no-op tasks landing in a single tick every cycle.
+                if (!this.passesStackPreChecks(stackedEntity))
+                    continue;
+
+                if (!needsEntityThread) {
+                    this.tryStackEntityChecked(stackedEntity);
+                    continue;
                 }
+
+                if (pending == null)
+                    pending = new ArrayList<>();
+                pending.add(stackedEntity);
             }
+
+            if (pending != null)
+                this.submitStackBatches(pending);
         } finally {
             this.stackingEntities = false;
+        }
+    }
+
+    /**
+     * Submits the stacks that survived the async culls to the main thread in batches, so the pass costs one
+     * budgeted job per {@value #MAIN_THREAD_BATCH_SIZE} stacks instead of one Bukkit task per stack.
+     */
+    private void submitStackBatches(List<StackedEntity> pending) {
+        BatchedMainThreadExecutor executor = BatchedMainThreadExecutor.getInstance();
+        if (executor.isPerRegion()) {
+            // Folia owns entities per region, so they cannot be batched into one job
+            for (StackedEntity stackedEntity : pending)
+                executor.submit(stackedEntity.getEntity(), () -> this.tryStackEntityChecked(stackedEntity));
+            return;
+        }
+
+        for (int i = 0; i < pending.size(); i += MAIN_THREAD_BATCH_SIZE) {
+            List<StackedEntity> batch = pending.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, pending.size()));
+            executor.submit(() -> {
+                for (StackedEntity stackedEntity : batch)
+                    this.tryStackEntityChecked(stackedEntity);
+            });
         }
     }
 
@@ -195,12 +259,65 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
         this.unstackingEntities = true;
         try {
-            for (StackedEntity stackedEntity : this.stackedEntities.values())
-                this.tryUnstackEntity(stackedEntity);
+            List<PendingUnstackCheck> pending = null;
+            for (StackedEntity stackedEntity : this.stackedEntities.values()) {
+                LivingEntity entity = stackedEntity.getEntity();
+                if (entity == null || stackedEntity.getStackSize() <= 1 || !entity.isValid())
+                    continue;
+
+                // An entity outside of any player's tick range is not being simulated, so nothing about it
+                // can have changed since the last pass
+                if (IS_TICKING_SUPPORTED && !entity.isTicking())
+                    continue;
+
+                // Claim the stack before consuming its dirty state, so a check that is already in flight
+                // cannot swallow a change that happened after it started
+                UUID entityId = entity.getUniqueId();
+                if (!this.pendingEntityUnstackChecks.add(entityId))
+                    continue;
+
+                if (!stackedEntity.needsUnstackCheck()) {
+                    this.pendingEntityUnstackChecks.remove(entityId);
+                    continue;
+                }
+
+                if (pending == null)
+                    pending = new ArrayList<>();
+                pending.add(new PendingUnstackCheck(stackedEntity, entityId));
+            }
+
+            if (pending != null)
+                this.submitUnstackBatches(pending);
         } finally {
             this.unstackingEntities = false;
         }
     }
+
+    /**
+     * Submits the stacks that are actually due for an unstack check to the main thread in batches.
+     */
+    private void submitUnstackBatches(List<PendingUnstackCheck> pending) {
+        BatchedMainThreadExecutor executor = BatchedMainThreadExecutor.getInstance();
+        if (executor.isPerRegion()) {
+            for (PendingUnstackCheck check : pending)
+                executor.submit(check.stackedEntity().getEntity(), () -> this.checkUnstackEntity(check.stackedEntity(), check.entityId()));
+            return;
+        }
+
+        for (int i = 0; i < pending.size(); i += MAIN_THREAD_BATCH_SIZE) {
+            List<PendingUnstackCheck> batch = pending.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, pending.size()));
+            executor.submit(() -> {
+                for (PendingUnstackCheck check : batch)
+                    this.checkUnstackEntity(check.stackedEntity(), check.entityId());
+            });
+        }
+    }
+
+    /**
+     * A stack claimed in {@link #pendingEntityUnstackChecks}, along with the id it was claimed under; the
+     * stack's own entity can be replaced by an unstack before the check runs.
+     */
+    private record PendingUnstackCheck(StackedEntity stackedEntity, UUID entityId) { }
 
     @Override
     public void tryUnstackEntity(StackedEntity stackedEntity) {
@@ -212,22 +329,32 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         if (!this.pendingEntityUnstackChecks.add(entityId))
             return;
 
-        ThreadUtils.runOnEntity(entity, () -> {
-            try {
-                LivingEntity currentEntity = stackedEntity.getEntity();
-                if (currentEntity == null || stackedEntity.getStackSize() <= 1 || !currentEntity.isValid())
-                    return;
+        // Event-driven callers want this to happen now, not on the next budgeted drain
+        ThreadUtils.runOnEntity(entity, () -> this.checkUnstackEntity(stackedEntity, entityId));
+    }
 
-                if (!stackedEntity.shouldStayStacked()) {
-                    if (stackedEntity.getStackSize() > 1)
-                        this.splitEntityStack(stackedEntity);
-                } else if (SettingKey.ENTITY_MIN_SPLIT_IF_LOWER.get() && stackedEntity.getStackSize() < stackedEntity.getStackSettings().getMinStackSize()) {
-                    this.splitEntireStack(stackedEntity);
-                }
-            } finally {
-                this.pendingEntityUnstackChecks.remove(entityId);
+    /**
+     * Runs the unstack check for a stack that has already been claimed in the pending set. Must run on the
+     * entity's thread.
+     *
+     * @param stackedEntity The stack to check
+     * @param entityId The id the stack was claimed under, which is released again when the check finishes
+     */
+    private void checkUnstackEntity(StackedEntity stackedEntity, UUID entityId) {
+        try {
+            LivingEntity entity = stackedEntity.getEntity();
+            if (entity == null || stackedEntity.getStackSize() <= 1 || !entity.isValid())
+                return;
+
+            if (!stackedEntity.shouldStayStacked()) {
+                if (stackedEntity.getStackSize() > 1)
+                    this.splitEntityStack(stackedEntity);
+            } else if (SettingKey.ENTITY_MIN_SPLIT_IF_LOWER.get() && stackedEntity.getStackSize() < stackedEntity.getStackSettings().getMinStackSize()) {
+                this.splitEntireStack(stackedEntity);
             }
-        });
+        } finally {
+            this.pendingEntityUnstackChecks.remove(entityId);
+        }
     }
 
     private void splitEntireStack(StackedEntity stackedEntity) {
@@ -240,18 +367,42 @@ public class StackingThread implements StackingLogic, AutoCloseable {
     }
 
     private void cleanupOrphanedEntities() {
-        for (Entity entity : this.targetWorld.getEntities()) {
+        this.pruneRemovedEntities();
+
+        // Iterating the level's entity list is only safe on the tick thread, so the scan stays here; what
+        // moves out is the work it finds. On a settled world that is nothing at all, and the scan itself is
+        // now a validity check and a map lookup per entity instead of a Bukkit metadata string build.
+        List<Runnable> orphans = null;
+        for (Entity entity : NMSAdapter.getHandler().getEntities(this.targetWorld)) {
             if (this.isRemoved(entity))
                 continue;
 
             if (entity instanceof LivingEntity livingEntity && entity.getType() != EntityType.ARMOR_STAND && entity.getType() != EntityType.PLAYER && !this.isEntityStacked(livingEntity)) {
-                if (!this.stackManager.isAreaDisabled(entity.getLocation()))
-                    this.createEntityStack(livingEntity, false);
+                if (this.stackManager.isAreaDisabled(entity.getLocation()))
+                    continue;
+
+                if (orphans == null)
+                    orphans = new ArrayList<>();
+                orphans.add(() -> this.createEntityStack(livingEntity, false));
             } else if (entity.getType() == VersionUtils.ITEM) {
                 Item item = (Item) entity;
-                if (!this.isItemStacked(item) && !this.stackManager.isAreaDisabled(entity.getLocation()))
-                    this.createItemStack(item, false);
+                if (this.isItemStacked(item) || this.stackManager.isAreaDisabled(entity.getLocation()))
+                    continue;
+
+                if (orphans == null)
+                    orphans = new ArrayList<>();
+                orphans.add(() -> this.createItemStack(item, false));
             }
+        }
+
+        if (orphans == null)
+            return;
+
+        List<Runnable> toCreate = orphans;
+        BatchedMainThreadExecutor executor = BatchedMainThreadExecutor.getInstance();
+        for (int i = 0; i < toCreate.size(); i += MAIN_THREAD_BATCH_SIZE) {
+            List<Runnable> batch = toCreate.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, toCreate.size()));
+            executor.submit(() -> batch.forEach(Runnable::run));
         }
     }
 
@@ -261,12 +412,9 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             return;
 
         List<StackedEntity> toRemove = this.stackedEntities.values().stream()
-                .filter(stackedEntity -> {
-                    LivingEntity entity = stackedEntity.getEntity();
-                    return !this.isRemoved(entity)
-                            && stackedEntity.getStackSize() > 1
-                            && entity.getTicksLived() - stackedEntity.getLastModifiedTicks() >= entityStackTtl;
-                })
+                .filter(stackedEntity -> !this.isRemoved(stackedEntity)
+                        && stackedEntity.getStackSize() > 1
+                        && stackedEntity.getEntity().getTicksLived() - stackedEntity.getLastModifiedTicks() >= entityStackTtl)
                 .toList();
 
         if (toRemove.isEmpty())
@@ -294,9 +442,10 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
         this.stackingItems = true;
         try {
+            this.pruneRemovedEntities();
+
             for (StackedItem stackedItem : this.stackedItems.values()) {
-                Item item = stackedItem.getItem();
-                if (item == null || this.isRemoved(item)) {
+                if (this.isRemoved(stackedItem)) {
                     this.removeItemStack(stackedItem);
                     continue;
                 }
@@ -328,15 +477,15 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             onlinePlayerIds.add(player.getUniqueId());
         this.nametagPlayerSnapshots.keySet().retainAll(onlinePlayerIds);
 
+        boolean asyncDisplayUpdates = StackedEntity.isAsyncDisplayUpdates();
         for (Player player : players) {
-            ThreadUtils.runOnEntity(player, () -> {
-                if (player.isValid() && player.getWorld().equals(this.targetWorld)) {
-                    this.nametagPlayerSnapshots.put(player.getUniqueId(), new PlayerNametagSnapshot(player,
-                            player.getLocation(), ItemUtils.isStackingTool(player.getInventory().getItemInMainHand())));
-                } else {
-                    this.nametagPlayerSnapshots.remove(player.getUniqueId());
-                }
-            });
+            // Positions are read racily throughout this pass already, and the stacking tool flag is
+            // maintained from the player's own thread, so the snapshot no longer needs a task per player
+            if (asyncDisplayUpdates) {
+                this.snapshotPlayer(player, true);
+            } else {
+                ThreadUtils.runOnEntity(player, () -> this.snapshotPlayer(player, false));
+            }
         }
 
         List<PlayerNametagSnapshot> snapshots = new ArrayList<>(this.nametagPlayerSnapshots.values());
@@ -349,27 +498,54 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             // done once per stack instead of once per (player, stack) pair
             if (this.dynamicEntityTags)
                 for (StackedEntity stackedEntity : new ArrayList<>(this.stackedEntities.values()))
-                    this.processEntityNametags(snapshots, stackedEntity);
+                    this.processEntityNametags(snapshots, stackedEntity, asyncDisplayUpdates);
 
             if (this.dynamicItemTags)
                 for (StackedItem stackedItem : new ArrayList<>(this.stackedItems.values()))
-                    this.processItemNametags(snapshots, stackedItem);
+                    this.processItemNametags(snapshots, stackedItem, asyncDisplayUpdates);
         } finally {
             this.updatingNametags = false;
         }
     }
 
-    private void processEntityNametags(List<PlayerNametagSnapshot> snapshots, StackedEntity stackedEntity) {
+    private void snapshotPlayer(Player player, boolean asyncDisplayUpdates) {
+        UUID playerId = player.getUniqueId();
+        if (!player.isValid() || !player.getWorld().equals(this.targetWorld)) {
+            this.nametagPlayerSnapshots.remove(playerId);
+            return;
+        }
+
+        boolean holdingStackingTool = asyncDisplayUpdates
+                ? ItemUtils.isHoldingStackingTool(playerId)
+                : ItemUtils.isStackingTool(player.getInventory().getItemInMainHand());
+        this.nametagPlayerSnapshots.put(playerId, new PlayerNametagSnapshot(player, player.getLocation(), holdingStackingTool));
+    }
+
+    private void processEntityNametags(List<PlayerNametagSnapshot> snapshots, StackedEntity stackedEntity, boolean asyncDisplayUpdates) {
         LivingEntity entity = stackedEntity.getEntity();
         if (entity == null)
             return;
 
         // Coarse cull off-thread first. With thousands of stacks and a hundred players, scheduling an
         // entity task per stack just to discover nobody is near it was most of this pass's cost.
-        // Reading the position here is racy but harmless; the exact check happens on the entity's thread.
+        // Reading the position here is racy but harmless; the exact check happens below.
         List<PlayerNametagSnapshot> nearby = this.collectNearbySnapshots(snapshots, entity.getLocation());
         if (nearby == null)
             return;
+
+        // Both the nametag and the stacking tool particle are packets, and the tracked player set is
+        // maintained by the track/untrack events, so on Paper this whole pass stays off the main thread
+        if (asyncDisplayUpdates) {
+            if (!entity.isValid() || entity.isDead())
+                return;
+
+            Set<UUID> tracking = stackedEntity.getTrackingPlayers();
+            if (tracking.isEmpty())
+                return;
+
+            this.updateEntityNametags(stackedEntity, entity, nearby, player -> tracking.contains(player.getUniqueId()), true);
+            return;
+        }
 
         ThreadUtils.runOnEntity(entity, () -> {
             if (!entity.isValid() || entity.isDead())
@@ -380,68 +556,90 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             if (tracking.isEmpty())
                 return;
 
-            Location entityLocation = entity.getLocation();
-            World entityWorld = entityLocation.getWorld();
-            double targetX = entityLocation.getX(), targetY = entityLocation.getY() + entity.getEyeHeight(), targetZ = entityLocation.getZ();
-            String displayName = null;
-            boolean displayNameComputed = false;
-            for (PlayerNametagSnapshot snapshot : nearby) {
-                Player player = snapshot.player();
-                if (!player.isValid() || !tracking.contains(player))
-                    continue;
-
-                Location playerLocation = snapshot.location();
-                if (!entityWorld.equals(playerLocation.getWorld()))
-                    continue;
-
-                double distanceSqrd = playerLocation.distanceSquared(entityLocation);
-                if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
-                    continue;
-
-                boolean visible = distanceSqrd < this.entityDynamicViewRangeSqrd;
-                if (visible && this.entityDynamicWallDetection) {
-                    double playerX = playerLocation.getX(), playerY = playerLocation.getY(), playerZ = playerLocation.getZ();
-                    visible = stackedEntity.checkLineOfSight(player.getUniqueId(), playerX, playerY, playerZ, targetX, targetY, targetZ,
-                            () -> EntityUtils.hasLineOfSight(entityWorld, playerX, playerY, playerZ, targetX, targetY, targetZ, 0.75, true));
-                }
-
-                if (!displayNameComputed) {
-                    // Also computes the isDisplayNameVisible state, so this must be called first
-                    displayName = stackedEntity.getDisplayName();
-                    displayNameComputed = true;
-                }
-
-                boolean displayNameVisible = stackedEntity.isDisplayNameVisible() && visible;
-                boolean sendNametag = stackedEntity.markNametagSent(player.getUniqueId(), displayName, displayNameVisible);
-                boolean spawnParticles = visible && snapshot.holdingStackingTool();
-                if (!sendNametag && !spawnParticles)
-                    continue; // Player already has this exact tag, nothing to send
-
-                Location particleLocation = null;
-                DustOptions dustOptions = null;
-                if (spawnParticles) {
-                    particleLocation = entityLocation.clone().add(0, entity.getEyeHeight(true) + 0.75, 0);
-                    dustOptions = PersistentDataUtils.isUnstackable(entity) ? StackerUtils.UNSTACKABLE_DUST_OPTIONS : StackerUtils.STACKABLE_DUST_OPTIONS;
-                }
-
-                String finalDisplayName = displayName;
-                boolean finalSpawnParticles = spawnParticles;
-                Location finalParticleLocation = particleLocation;
-                DustOptions finalDustOptions = dustOptions;
-                ThreadUtils.runOnEntity(player, () -> {
-                    if (!player.isValid())
-                        return;
-
-                    if (sendNametag)
-                        NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, entity, finalDisplayName, displayNameVisible);
-                    if (finalSpawnParticles)
-                        player.spawnParticle(VersionUtils.DUST, finalParticleLocation, 1, 0.0, 0.0, 0.0, 0.0, finalDustOptions);
-                });
-            }
+            this.updateEntityNametags(stackedEntity, entity, nearby, tracking::contains, false);
         });
     }
 
-    private void processItemNametags(List<PlayerNametagSnapshot> snapshots, StackedItem stackedItem) {
+    /**
+     * Sends each nearby player the nametag state this stack should currently have for them.
+     *
+     * @param stackedEntity The stack being updated
+     * @param entity The stack's entity
+     * @param nearby The players close enough to possibly see the tag
+     * @param tracking Tests whether a player's client currently has the entity
+     * @param sendDirectly true to send the packets from the calling thread, false to schedule them
+     */
+    private void updateEntityNametags(StackedEntity stackedEntity, LivingEntity entity, List<PlayerNametagSnapshot> nearby,
+                                      Predicate<Player> tracking, boolean sendDirectly) {
+        Location entityLocation = entity.getLocation();
+        World entityWorld = entityLocation.getWorld();
+        double targetX = entityLocation.getX(), targetY = entityLocation.getY() + entity.getEyeHeight(), targetZ = entityLocation.getZ();
+        String displayName = null;
+        boolean displayNameComputed = false;
+        for (PlayerNametagSnapshot snapshot : nearby) {
+            Player player = snapshot.player();
+            if (!player.isValid() || !tracking.test(player))
+                continue;
+
+            Location playerLocation = snapshot.location();
+            if (!entityWorld.equals(playerLocation.getWorld()))
+                continue;
+
+            double distanceSqrd = playerLocation.distanceSquared(entityLocation);
+            if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
+                continue;
+
+            boolean visible = distanceSqrd < this.entityDynamicViewRangeSqrd;
+            if (visible && this.entityDynamicWallDetection) {
+                double playerX = playerLocation.getX(), playerY = playerLocation.getY(), playerZ = playerLocation.getZ();
+                visible = stackedEntity.checkLineOfSight(player.getUniqueId(), playerX, playerY, playerZ, targetX, targetY, targetZ,
+                        () -> EntityUtils.hasLineOfSight(entityWorld, playerX, playerY, playerZ, targetX, targetY, targetZ, 0.75, true));
+            }
+
+            if (!displayNameComputed) {
+                // Also computes the isDisplayNameVisible state, so this must be called first
+                displayName = stackedEntity.getDisplayName();
+                displayNameComputed = true;
+            }
+
+            boolean displayNameVisible = stackedEntity.isDisplayNameVisible() && visible;
+            boolean sendNametag = stackedEntity.markNametagSent(player.getUniqueId(), displayName, displayNameVisible);
+            boolean spawnParticles = visible && snapshot.holdingStackingTool();
+            if (!sendNametag && !spawnParticles)
+                continue; // Player already has this exact tag, nothing to send
+
+            Location particleLocation = null;
+            DustOptions dustOptions = null;
+            if (spawnParticles) {
+                particleLocation = entityLocation.clone().add(0, entity.getEyeHeight(true) + 0.75, 0);
+                dustOptions = stackedEntity.isUnstackable() ? StackerUtils.UNSTACKABLE_DUST_OPTIONS : StackerUtils.STACKABLE_DUST_OPTIONS;
+            }
+
+            if (sendDirectly) {
+                if (sendNametag)
+                    NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, entity, displayName, displayNameVisible);
+                if (spawnParticles)
+                    player.spawnParticle(VersionUtils.DUST, particleLocation, 1, 0.0, 0.0, 0.0, 0.0, dustOptions);
+                continue;
+            }
+
+            String finalDisplayName = displayName;
+            boolean finalSpawnParticles = spawnParticles;
+            Location finalParticleLocation = particleLocation;
+            DustOptions finalDustOptions = dustOptions;
+            ThreadUtils.runOnEntity(player, () -> {
+                if (!player.isValid())
+                    return;
+
+                if (sendNametag)
+                    NMSAdapter.getHandler().updateEntityNameTagForPlayer(player, entity, finalDisplayName, displayNameVisible);
+                if (finalSpawnParticles)
+                    player.spawnParticle(VersionUtils.DUST, finalParticleLocation, 1, 0.0, 0.0, 0.0, 0.0, finalDustOptions);
+            });
+        }
+    }
+
+    private void processItemNametags(List<PlayerNametagSnapshot> snapshots, StackedItem stackedItem, boolean asyncDisplayUpdates) {
         Item item = stackedItem.getItem();
         if (item == null)
             return;
@@ -449,6 +647,18 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         List<PlayerNametagSnapshot> nearby = this.collectNearbySnapshots(snapshots, item.getLocation());
         if (nearby == null)
             return;
+
+        if (asyncDisplayUpdates) {
+            if (!item.isValid() || !item.isCustomNameVisible())
+                return;
+
+            Set<UUID> tracking = stackedItem.getTrackingPlayers();
+            if (tracking.isEmpty())
+                return;
+
+            this.updateItemNametags(item, nearby, player -> tracking.contains(player.getUniqueId()), true);
+            return;
+        }
 
         ThreadUtils.runOnEntity(item, () -> {
             if (!item.isValid() || !item.isCustomNameVisible())
@@ -458,32 +668,49 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             if (tracking.isEmpty())
                 return;
 
-            Location itemLocation = item.getLocation();
-            World itemWorld = itemLocation.getWorld();
-            for (PlayerNametagSnapshot snapshot : nearby) {
-                Player player = snapshot.player();
-                if (!player.isValid() || !tracking.contains(player))
-                    continue;
-
-                Location playerLocation = snapshot.location();
-                if (!itemWorld.equals(playerLocation.getWorld()))
-                    continue;
-
-                double distanceSqrd = playerLocation.distanceSquared(itemLocation);
-                if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
-                    continue;
-
-                boolean visible = distanceSqrd < this.itemDynamicViewRangeSqrd;
-                if (visible && this.itemDynamicWallDetection)
-                    visible = EntityUtils.hasLineOfSight(itemWorld, playerLocation.getX(), playerLocation.getY(), playerLocation.getZ(), itemLocation.getX(), itemLocation.getY(), itemLocation.getZ(), 0.75, true);
-
-                boolean finalVisible = visible;
-                ThreadUtils.runOnEntity(player, () -> {
-                    if (player.isValid())
-                        NMSAdapter.getHandler().updateEntityNameTagVisibilityForPlayer(player, item, finalVisible);
-                });
-            }
+            this.updateItemNametags(item, nearby, tracking::contains, false);
         });
+    }
+
+    /**
+     * Sends each nearby player the nametag visibility this item should currently have for them.
+     *
+     * @param item The item being updated
+     * @param nearby The players close enough to possibly see the tag
+     * @param tracking Tests whether a player's client currently has the item
+     * @param sendDirectly true to send the packets from the calling thread, false to schedule them
+     */
+    private void updateItemNametags(Item item, List<PlayerNametagSnapshot> nearby, Predicate<Player> tracking, boolean sendDirectly) {
+        Location itemLocation = item.getLocation();
+        World itemWorld = itemLocation.getWorld();
+        for (PlayerNametagSnapshot snapshot : nearby) {
+            Player player = snapshot.player();
+            if (!player.isValid() || !tracking.test(player))
+                continue;
+
+            Location playerLocation = snapshot.location();
+            if (!itemWorld.equals(playerLocation.getWorld()))
+                continue;
+
+            double distanceSqrd = playerLocation.distanceSquared(itemLocation);
+            if (distanceSqrd > StackerUtils.ASSUMED_ENTITY_VISIBILITY_RANGE)
+                continue;
+
+            boolean visible = distanceSqrd < this.itemDynamicViewRangeSqrd;
+            if (visible && this.itemDynamicWallDetection)
+                visible = EntityUtils.hasLineOfSight(itemWorld, playerLocation.getX(), playerLocation.getY(), playerLocation.getZ(), itemLocation.getX(), itemLocation.getY(), itemLocation.getZ(), 0.75, true);
+
+            if (sendDirectly) {
+                NMSAdapter.getHandler().updateEntityNameTagVisibilityForPlayer(player, item, visible);
+                continue;
+            }
+
+            boolean finalVisible = visible;
+            ThreadUtils.runOnEntity(player, () -> {
+                if (player.isValid())
+                    NMSAdapter.getHandler().updateEntityNameTagVisibilityForPlayer(player, item, finalVisible);
+            });
+        }
     }
 
     /**
@@ -520,14 +747,20 @@ public class StackingThread implements StackingLogic, AutoCloseable {
     private record PlayerNametagSnapshot(Player player, Location location, boolean holdingStackingTool) {}
 
     /**
-     * Forgets the nametag state every stack in this world holds for a player, so they are resent the
-     * next time they can see the stack. Called when a player disconnects.
+     * Forgets everything every stack in this world holds for a player: the nametag state, so it is resent
+     * the next time they can see the stack, and the tracking record, since a disconnecting client stops
+     * tracking everything at once. Called when a player disconnects.
      *
      * @param playerId The player to forget
      */
     public void forgetNametagPlayer(UUID playerId) {
-        for (StackedEntity stackedEntity : this.stackedEntities.values())
+        for (StackedEntity stackedEntity : this.stackedEntities.values()) {
             stackedEntity.forgetNametagState(playerId);
+            stackedEntity.removeTrackingPlayer(playerId);
+        }
+
+        for (StackedItem stackedItem : this.stackedItems.values())
+            stackedItem.removeTrackingPlayer(playerId);
     }
 
     private void updateHolograms() {
@@ -785,9 +1018,12 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         this.stackedEntities.put(livingEntity.getUniqueId(), newStackedEntity);
 
         if (tryStack && this.canEntityInstantStack()) {
-            livingEntity.setMetadata(NEW_METADATA, new FixedMetadataValue(this.rosePlugin, true));
-            this.tryStackEntity(newStackedEntity);
-            livingEntity.removeMetadata(NEW_METADATA, this.rosePlugin);
+            newStackedEntity.setNewlyCreated(true);
+            try {
+                this.tryStackEntity(newStackedEntity);
+            } finally {
+                newStackedEntity.setNewlyCreated(false);
+            }
         }
 
         return newStackedEntity;
@@ -810,9 +1046,12 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         this.stackedItems.put(item.getUniqueId(), newStackedItem);
 
         if (tryStack && SettingKey.ITEM_INSTANT_STACK.get()) {
-            item.setMetadata(NEW_METADATA, new FixedMetadataValue(this.rosePlugin, true));
-            this.tryStackItem(newStackedItem);
-            item.removeMetadata(NEW_METADATA, this.rosePlugin);
+            newStackedItem.setNewlyCreated(true);
+            try {
+                this.tryStackItem(newStackedItem);
+            } finally {
+                newStackedItem.setNewlyCreated(false);
+            }
         }
 
         // Only update the display after stacking to avoid needing to calculate the name unnecessarily
@@ -1150,21 +1389,21 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
     @Override
     public void saveChunkEntities(List<Entity> entities, boolean clearStored) {
+        // Direct loops; this runs on the critical path of chunk unloading, where the stream chains this
+        // replaces built several intermediate lists per unload
         List<Stack<?>> stacks = new ArrayList<>(entities.size());
-        if (this.stackManager.isEntityStackingEnabled()) {
-            stacks.addAll(entities.stream()
-                    .filter(x -> x instanceof LivingEntity && x.getType() != EntityType.ARMOR_STAND && x.getType() != EntityType.PLAYER)
-                    .map(x -> this.stackedEntities.get(x.getUniqueId()))
-                    .filter(Objects::nonNull)
-                    .toList());
-        }
-
-        if (this.stackManager.isItemStackingEnabled()) {
-            stacks.addAll(entities.stream()
-                    .filter(x -> x.getType() == VersionUtils.ITEM)
-                    .map(x -> this.stackedItems.get(x.getUniqueId()))
-                    .filter(Objects::nonNull)
-                    .toList());
+        boolean entityStackingEnabled = this.stackManager.isEntityStackingEnabled();
+        boolean itemStackingEnabled = this.stackManager.isItemStackingEnabled();
+        for (Entity entity : entities) {
+            if (entityStackingEnabled && entity instanceof LivingEntity && entity.getType() != EntityType.ARMOR_STAND && entity.getType() != EntityType.PLAYER) {
+                StackedEntity stackedEntity = this.stackedEntities.get(entity.getUniqueId());
+                if (stackedEntity != null)
+                    stacks.add(stackedEntity);
+            } else if (itemStackingEnabled && entity.getType() == VersionUtils.ITEM) {
+                StackedItem stackedItem = this.stackedItems.get(entity.getUniqueId());
+                if (stackedItem != null)
+                    stacks.add(stackedItem);
+            }
         }
 
         this.saveChunkEntityStacks(stacks, clearStored);
@@ -1172,28 +1411,19 @@ public class StackingThread implements StackingLogic, AutoCloseable {
 
     @Override
     public <T extends Stack<?>> void saveChunkEntityStacks(List<T> stacks, boolean clearStored) {
-        if (this.stackManager.isEntityStackingEnabled()) {
-            List<StackedEntity> stackedEntities = stacks.stream()
-                    .filter(x -> x instanceof StackedEntity)
-                    .map(x -> (StackedEntity) x)
-                    .toList();
-
-            stackedEntities.forEach(DataUtils::writeStackedEntity);
-
-            if (clearStored)
-                stackedEntities.stream().map(StackedEntity::getEntity).map(Entity::getUniqueId).forEach(this.stackedEntities::remove);
-        }
-
-        if (this.stackManager.isItemStackingEnabled()) {
-            List<StackedItem> stackedItems = stacks.stream()
-                    .filter(x -> x instanceof StackedItem)
-                    .map(x -> (StackedItem) x)
-                    .toList();
-
-            stackedItems.forEach(DataUtils::writeStackedItem);
-
-            if (clearStored)
-                stackedItems.stream().map(StackedItem::getItem).map(Entity::getUniqueId).forEach(this.stackedItems::remove);
+        boolean entityStackingEnabled = this.stackManager.isEntityStackingEnabled();
+        boolean itemStackingEnabled = this.stackManager.isItemStackingEnabled();
+        for (Stack<?> stack : stacks) {
+            if (entityStackingEnabled && stack instanceof StackedEntity stackedEntity) {
+                // Unloading and shutdown always write, no matter what the dirty state says
+                DataUtils.writeStackedEntity(stackedEntity);
+                if (clearStored)
+                    this.stackedEntities.remove(stackedEntity.getEntity().getUniqueId());
+            } else if (itemStackingEnabled && stack instanceof StackedItem stackedItem) {
+                DataUtils.writeStackedItem(stackedItem);
+                if (clearStored)
+                    this.stackedItems.remove(stackedItem.getItem().getUniqueId());
+            }
         }
     }
 
@@ -1203,16 +1433,61 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         for (Chunk chunk : this.stackChunkData.keySet())
             this.saveChunkBlocks(chunk, false);
 
-        // Save stacked entities and items
-        List<Stack<?>> stacks = new ArrayList<>(this.stackedEntities.size() + this.stackedItems.size());
-        stacks.addAll(this.stackedEntities.values());
-        stacks.addAll(this.stackedItems.values());
-        this.saveChunkEntityStacks(stacks, false);
-
         if (clearStored) {
+            // Shutdown and reload: write everything, now, in this call
+            List<Stack<?>> stacks = new ArrayList<>(this.stackedEntities.size() + this.stackedItems.size());
+            stacks.addAll(this.stackedEntities.values());
+            stacks.addAll(this.stackedItems.values());
+            this.saveChunkEntityStacks(stacks, false);
+
             this.stackChunkData.clear();
             this.stackedEntities.clear();
             this.stackedItems.clear();
+            return;
+        }
+
+        this.saveAutosaveStacks();
+    }
+
+    /**
+     * The periodic autosave. Serializing and GZIPing every stack in the world in a single tick is one of
+     * the largest stalls the plugin can produce, so this skips the stacks that have not changed since they
+     * were last written and spreads whatever is left across ticks under the main thread budget.
+     */
+    private void saveAutosaveStacks() {
+        List<Stack<?>> toSave = null;
+        if (this.stackManager.isEntityStackingEnabled()) {
+            for (StackedEntity stackedEntity : this.stackedEntities.values()) {
+                if (!stackedEntity.needsSave())
+                    continue;
+
+                if (toSave == null)
+                    toSave = new ArrayList<>();
+                toSave.add(stackedEntity);
+            }
+        }
+
+        if (this.stackManager.isItemStackingEnabled()) {
+            for (StackedItem stackedItem : this.stackedItems.values()) {
+                if (toSave == null)
+                    toSave = new ArrayList<>();
+                toSave.add(stackedItem);
+            }
+        }
+
+        if (toSave == null)
+            return;
+
+        List<Stack<?>> stacks = toSave;
+        BatchedMainThreadExecutor executor = BatchedMainThreadExecutor.getInstance();
+        if (executor.isPerRegion()) {
+            this.saveChunkEntityStacks(stacks, false);
+            return;
+        }
+
+        for (int i = 0; i < stacks.size(); i += MAIN_THREAD_BATCH_SIZE) {
+            List<Stack<?>> batch = stacks.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, stacks.size()));
+            executor.submit(() -> this.saveChunkEntityStacks(batch, false));
         }
     }
 
@@ -1223,22 +1498,53 @@ public class StackingThread implements StackingLogic, AutoCloseable {
      */
     @Override
     public void tryStackEntity(StackedEntity stackedEntity) {
-        if (this.disabled)
+        if (!this.passesStackPreChecks(stackedEntity))
             return;
 
+        this.tryStackEntityChecked(stackedEntity);
+    }
+
+    /**
+     * Runs the culls that gate all of the real stacking work. None of them need the entity's thread, so the
+     * periodic pass evaluates them off-thread and only schedules the stacks that survive.
+     * <p>
+     * {@link StackedEntity#hasMoved()} records the position it sees, so this must be called exactly once
+     * per stack per cycle; {@link #tryStackEntityChecked} deliberately does not repeat it.
+     *
+     * @param stackedEntity The stack to check
+     * @return true if the stack is worth looking for neighbours for, otherwise false
+     */
+    private boolean passesStackPreChecks(StackedEntity stackedEntity) {
+        if (this.disabled)
+            return false;
+
+        EntityStackSettings stackSettings = stackedEntity.getStackSettings();
+        if (stackSettings == null)
+            return false;
+
+        if (stackedEntity.checkNPC())
+            return false;
+
+        if (this.isRemoved(stackedEntity) || !stackedEntity.hasMoved())
+            return false;
+
+        return WorldGuardHook.testLocation(stackedEntity.getEntity().getLocation());
+    }
+
+    /**
+     * Stacks an entity that has already passed {@link #passesStackPreChecks}. Must run on the entity's
+     * thread when line of sight or water checks are enabled.
+     */
+    private void tryStackEntityChecked(StackedEntity stackedEntity) {
         EntityStackSettings stackSettings = stackedEntity.getStackSettings();
         if (stackSettings == null)
             return;
 
-        if (stackedEntity.checkNPC())
+        // The pre-checks may have run several ticks ago if the batch had to be spread over ticks
+        if (this.isRemoved(stackedEntity))
             return;
 
         LivingEntity entity = stackedEntity.getEntity();
-        if (this.isRemoved(entity) || !stackedEntity.hasMoved())
-            return;
-
-        if (!WorldGuardHook.testLocation(entity.getLocation()))
-            return;
 
         Collection<Entity> nearbyEntities;
         Predicate<Entity> predicate = x -> x.getType() == entity.getType();
@@ -1252,11 +1558,13 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         targetEntities.add(stackedEntity);
 
         for (Entity otherEntity : nearbyEntities) {
-            if (entity == otherEntity || this.isRemoved(otherEntity))
+            if (entity == otherEntity)
                 continue;
 
+            // Looking the stack up first lets the removal check use the stack's own flags instead of
+            // Bukkit metadata; the outcome is the same, an entity with no stack is skipped either way
             StackedEntity other = this.stackedEntities.get(otherEntity.getUniqueId());
-            if (other == null)
+            if (other == null || this.isRemoved(other))
                 continue;
 
             if (stackSettings.testCanStackWith(stackedEntity, other, false)
@@ -1315,37 +1623,48 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         if (this.disabled)
             return;
 
+        // Everything here is a cull, and they run before the nearby scan because the scan and the item
+        // comparisons behind it are the expensive part of this pass
         ItemStackSettings stackSettings = stackedItem.getStackSettings();
         Item item = stackedItem.getItem();
         if (stackSettings == null
                 || !stackSettings.isStackingEnabled()
+                || item == null
                 || item.getPickupDelay() > 40
                 || !stackedItem.hasMoved()
-                || PersistentDataUtils.isUnstackable(item))
+                || stackedItem.isUnstackable()
+                || this.isRemoved(stackedItem))
             return;
 
-        if (this.isRemoved(item))
-            return;
-
-        Predicate<Entity> predicate = x -> x.getType() == VersionUtils.ITEM;
-        Set<Item> nearbyItems = this.entityCacheManager.getNearbyEntities(stackedItem.getLocation(), SettingKey.ITEM_MERGE_RADIUS.get(), predicate)
-                .stream()
-                .map(x -> (Item) x)
-                .collect(Collectors.toSet());
+        ItemStack itemStack = item.getItemStack();
+        Material itemType = itemStack.getType();
+        boolean itemHasMeta = itemStack.hasItemMeta();
 
         Set<StackedItem> targetItems = new HashSet<>();
-        for (Item otherItem : nearbyItems) {
-            if (item == otherItem
-                    || otherItem.getPickupDelay() > 40
-                    || !item.getItemStack().isSimilar(otherItem.getItemStack())
-                    || !Objects.equals(item.getOwner(), otherItem.getOwner())
-                    || PersistentDataUtils.isUnstackable(otherItem)
-                    || this.isRemoved(otherItem))
+        for (Entity nearbyEntity : this.entityCacheManager.getNearbyEntities(stackedItem.getLocation(), SettingKey.ITEM_MERGE_RADIUS.get(), ITEM_PREDICATE)) {
+            if (nearbyEntity == item)
+                continue;
+
+            Item otherItem = (Item) nearbyEntity;
+            if (otherItem.getPickupDelay() > 40)
+                continue;
+
+            // ItemStack#isSimilar compares the full item meta, which is by far the most expensive thing
+            // this pass does. Type and "has meta" are a strict refinement of it - two items that differ in
+            // either can never be similar - so they reject the common case up front for free, and isSimilar
+            // still has the final say below.
+            ItemStack otherItemStack = otherItem.getItemStack();
+            if (otherItemStack.getType() != itemType || otherItemStack.hasItemMeta() != itemHasMeta)
                 continue;
 
             StackedItem other = this.stackedItems.get(otherItem.getUniqueId());
-            if (other != null)
-                targetItems.add(other);
+            if (other == null || other.isUnstackable() || this.isRemoved(other))
+                continue;
+
+            if (!Objects.equals(item.getOwner(), otherItem.getOwner()) || !itemStack.isSimilar(otherItemStack))
+                continue;
+
+            targetItems.add(other);
         }
 
         if (targetItems.isEmpty())
@@ -1407,12 +1726,48 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         this.stackedItems.put(entityUUID, stackedItem);
     }
 
+    /**
+     * Checks whether an entity that no stack is known for should be treated as gone.
+     *
+     * @param entity The entity to check
+     * @return true if the entity is gone, otherwise false
+     */
     private boolean isRemoved(Entity entity) {
-        return entity == null || (!entity.hasMetadata(NEW_METADATA) && !entity.isValid()) || REMOVED_ENTITIES.getIfPresent(entity.getUniqueId()) != null;
+        return entity == null || !entity.isValid() || this.wasRecentlyRemoved(entity.getUniqueId());
+    }
+
+    private boolean isRemoved(StackedEntity stackedEntity) {
+        LivingEntity entity = stackedEntity.getEntity();
+        // A stack being instant-stacked right after creation has an entity that has not finished spawning
+        // and so is not valid yet; that used to be flagged with Bukkit metadata, which cost a
+        // UUID.toString() concatenation and a synchronized lookup on every single cull
+        return entity == null || (!stackedEntity.isNewlyCreated() && !entity.isValid()) || this.wasRecentlyRemoved(entity.getUniqueId());
+    }
+
+    private boolean isRemoved(StackedItem stackedItem) {
+        Item item = stackedItem.getItem();
+        return item == null || (!stackedItem.isNewlyCreated() && !item.isValid()) || this.wasRecentlyRemoved(item.getUniqueId());
+    }
+
+    private boolean wasRecentlyRemoved(UUID entityId) {
+        Long removedAt = this.removedEntities.get(entityId);
+        return removedAt != null && System.currentTimeMillis() - removedAt < REMOVED_ENTITY_MEMORY_MS;
     }
 
     private void setRemoved(Entity entity) {
-        REMOVED_ENTITIES.put(entity.getUniqueId(), true);
+        this.removedEntities.put(entity.getUniqueId(), System.currentTimeMillis());
+    }
+
+    /**
+     * Drops removal timestamps that have aged past the window they are remembered for. Called from the
+     * periodic passes; the map is normally tiny, so this costs nothing when nothing was removed.
+     */
+    private void pruneRemovedEntities() {
+        if (this.removedEntities.isEmpty())
+            return;
+
+        long expiration = System.currentTimeMillis() - REMOVED_ENTITY_MEMORY_MS;
+        this.removedEntities.values().removeIf(removedAt -> removedAt < expiration);
     }
 
     /**

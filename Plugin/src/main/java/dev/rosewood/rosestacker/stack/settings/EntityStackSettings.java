@@ -6,12 +6,15 @@ import com.google.gson.JsonObject;
 import com.google.gson.reflect.TypeToken;
 import dev.rosewood.rosegarden.config.CommentedFileConfiguration;
 import dev.rosewood.rosegarden.utils.NMSUtil;
+import dev.rosewood.rosegarden.utils.StringPlaceholders;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.config.SettingKey;
 import dev.rosewood.rosestacker.hook.SpawnerFlagPersistenceHook;
+import dev.rosewood.rosestacker.manager.LocaleManager;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
 import dev.rosewood.rosestacker.nms.NMSHandler;
 import dev.rosewood.rosestacker.nms.storage.StackedEntityDataStorageType;
+import dev.rosewood.rosestacker.nms.util.BoundedCache;
 import dev.rosewood.rosestacker.stack.EntityStackComparisonResult;
 import dev.rosewood.rosestacker.stack.StackedEntity;
 import dev.rosewood.rosestacker.stack.settings.conditions.entity.StackConditions;
@@ -66,6 +69,12 @@ public class EntityStackSettings extends StackSettings {
     private final List<StackConditionEntry<?>> stackConditions;
     private final Map<String, EntitySetting> extraSettings;
 
+    // Finished, colorified stack display strings keyed by what they are built from. There is only ever one
+    // distinct "5x Zombie" no matter how many stacks currently hold five zombies, and building one runs a
+    // placeholder replacement plus four colorify regex passes, on whichever thread changed the stack size.
+    private final BoundedCache<DisplayStringKey, String> displayStringCache;
+    private volatile int displayStringGeneration;
+
     // Settings that apply to every entity
     private final boolean enabled;
     private final String displayName;
@@ -87,6 +96,8 @@ public class EntityStackSettings extends StackSettings {
             throw new IllegalArgumentException("EntityType " + this.entityType.name() + " has no entity class");
 
         this.assignableClassMap = new ConcurrentHashMap<>();
+        this.displayStringCache = new BoundedCache<>(512);
+        this.displayStringGeneration = -1;
 
         List<StackConditions.StackCondition<?>> stackConditions = StackConditions.getEligibleConditions(this.entityClass);
         this.stackConditions = new ArrayList<>(stackConditions.size());
@@ -246,6 +257,40 @@ public class EntityStackSettings extends StackSettings {
     public String getDisplayName() {
         return this.displayName;
     }
+
+    /**
+     * Gets the finished nametag string for a stack of this entity type, building it only the first time a
+     * given size and custom name combination is seen.
+     *
+     * @param stackSize The size of the stack
+     * @param customName The entity's custom name, or null to use this type's configured display name
+     * @return the colorified display string
+     */
+    public String getStackDisplayString(int stackSize, String customName) {
+        LocaleManager localeManager = RoseStacker.getInstance().getManager(LocaleManager.class);
+        int generation = localeManager.getGeneration();
+        if (generation != this.displayStringGeneration) {
+            this.displayStringCache.clear();
+            this.displayStringGeneration = generation;
+        }
+
+        return this.displayStringCache.get(new DisplayStringKey(stackSize, customName), key -> {
+            StringPlaceholders.Builder placeholders = StringPlaceholders.builder("amount", StackerUtils.formatNumber(key.stackSize()));
+            if (key.customName() != null) {
+                placeholders.add("name", key.customName());
+                return localeManager.getLocaleMessage("entity-stack-display-custom-name", placeholders.build());
+            } else {
+                placeholders.add("name", this.displayName);
+                return localeManager.getLocaleMessage("entity-stack-display", placeholders.build());
+            }
+        });
+    }
+
+    /**
+     * Everything a stack display string depends on. The custom name is null when the type's configured
+     * display name is used instead.
+     */
+    private record DisplayStringKey(int stackSize, String customName) { }
 
     public int getMinStackSize() {
         if (this.minStackSize != -1)

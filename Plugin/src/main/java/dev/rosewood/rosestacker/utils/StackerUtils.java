@@ -45,7 +45,19 @@ public final class StackerUtils {
     public static final Random SEEDED_RANDOM = new Random();
     private static Set<EntityType> cachedStackableEntityTypes;
 
-    private static NumberFormat formatter = NumberFormat.getInstance();
+    /**
+     * Stack sizes are small non-negative numbers that repeat across thousands of stacks, so the formatted
+     * strings are cached; anything larger falls through to the formatter.
+     */
+    private static final int SMALL_NUMBER_CACHE_SIZE = 4096;
+
+    // NumberFormat is explicitly not thread-safe and this is called from the async stacking passes, the
+    // main thread and the world tick threads at the same time, so every thread gets its own. The
+    // generation counter lets clearCache() swap in a new separator without touching other threads' copies.
+    private static final ThreadLocal<ThreadNumberFormat> NUMBER_FORMAT = ThreadLocal.withInitial(ThreadNumberFormat::new);
+    private static volatile char groupingSeparator = ',';
+    private static volatile int numberFormatGeneration;
+    private static volatile String[] smallNumberCache = new String[SMALL_NUMBER_CACHE_SIZE];
 
     /**
      * Formats a string from THIS_FORMAT to This Format
@@ -245,7 +257,45 @@ public final class StackerUtils {
      * @return The formatted string
      */
     public static String formatNumber(long value) {
-        return formatter.format(value);
+        if (value >= 0 && value < SMALL_NUMBER_CACHE_SIZE) {
+            String[] cache = smallNumberCache;
+            int index = (int) value;
+            String cached = cache[index];
+            if (cached != null)
+                return cached;
+
+            String formatted = format(value);
+            if (smallNumberCache == cache) // Don't publish into an array that clearCache() has already replaced
+                cache[index] = formatted;
+            return formatted;
+        }
+
+        return format(value);
+    }
+
+    private static String format(long value) {
+        ThreadNumberFormat threadFormat = NUMBER_FORMAT.get();
+        int generation = numberFormatGeneration;
+        if (threadFormat.generation != generation)
+            threadFormat.rebuild(groupingSeparator, generation);
+        return threadFormat.format.format(value);
+    }
+
+    /**
+     * One thread's copy of the shared number format, rebuilt when the separator changes.
+     */
+    private static final class ThreadNumberFormat {
+
+        private NumberFormat format = NumberFormat.getInstance();
+        private int generation = -1;
+
+        private void rebuild(char separator, int generation) {
+            DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance();
+            symbols.setGroupingSeparator(separator);
+            this.format = new DecimalFormat("#,##0", symbols);
+            this.generation = generation;
+        }
+
     }
 
     public static String formatTicksAsTime(long value) {
@@ -289,9 +339,9 @@ public final class StackerUtils {
         ItemUtils.clearCache();
 
         String separator = RoseStacker.getInstance().getManager(LocaleManager.class).getLocaleMessage("number-separator");
-        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance();
-        symbols.setGroupingSeparator(!separator.isEmpty() ? separator.charAt(0) : ',');
-        formatter = new DecimalFormat("#,##0", symbols);
+        groupingSeparator = !separator.isEmpty() ? separator.charAt(0) : ',';
+        smallNumberCache = new String[SMALL_NUMBER_CACHE_SIZE];
+        numberFormatGeneration++; // Every thread rebuilds its own formatter the next time it formats anything
     }
 
     public static int getLuckLevel(Player player) {

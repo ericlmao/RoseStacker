@@ -32,6 +32,14 @@ public final class ThreadUtils {
         }
     }
 
+    /**
+     * @param entity The entity to check
+     * @return true if the current thread owns the entity, otherwise false
+     */
+    public static boolean isEntityThread(Entity entity) {
+        return SCHEDULER.isEntityThread(entity);
+    }
+
     public static void runOnEntity(Entity entity, Runnable runnable) {
         if (SCHEDULER.isEntityThread(entity)) {
             runnable.run();

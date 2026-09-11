@@ -112,7 +112,7 @@ public final class StackConditions {
             if (!stackSettings.isStackingEnabled())
                 return EntityStackComparisonResult.STACKING_NOT_ENABLED;
 
-            if (PersistentDataUtils.isUnstackable(entity1) || PersistentDataUtils.isUnstackable(entity2))
+            if (isUnstackable(stack1, entity1) || isUnstackable(stack2, entity2))
                 return EntityStackComparisonResult.MARKED_UNSTACKABLE;
 
             if (SettingKey.ENTITY_DONT_STACK_CUSTOM_NAMED.get() && (entity1.getCustomName() != null || entity2.getCustomName() != null)
@@ -129,7 +129,7 @@ public final class StackConditions {
             }
 
             if (!comparingForUnstack && stackSettings.shouldOnlyStackFromSpawners() &&
-                    (!PersistentDataUtils.isSpawnedFromSpawner(entity1) || !PersistentDataUtils.isSpawnedFromSpawner(entity2)))
+                    (!isSpawnedFromSpawner(stack1, entity1) || !isSpawnedFromSpawner(stack2, entity2)))
                 return EntityStackComparisonResult.NOT_SPAWNED_FROM_SPAWNER;
 
             // Don't stack if being ridden or is riding something
@@ -169,11 +169,11 @@ public final class StackConditions {
             }
 
             if (!comparingForUnstack && SettingKey.ENTITY_DONT_STACK_FROM_TRIAL_SPAWNERS.get() && NMSUtil.getVersionNumber() >= 21)
-                if (PersistentDataUtils.isSpawnedFromTrialSpawner(entity1) || PersistentDataUtils.isSpawnedFromTrialSpawner(entity2))
+                if (isSpawnedFromTrialSpawner(stack1, entity1) || isSpawnedFromTrialSpawner(stack2, entity2))
                     return EntityStackComparisonResult.FROM_TRIAL_SPAWNER;
 
             if (!comparingForUnstack && !SettingKey.ENTITY_STACK_FROM_DISPENSER_SPAWN_EGGS.get())
-                if (PersistentDataUtils.isSpawnedFromDispenser(entity1) || PersistentDataUtils.isSpawnedFromDispenser(entity2))
+                if (isSpawnedFromDispenser(stack1, entity1) || isSpawnedFromDispenser(stack2, entity2))
                     return EntityStackComparisonResult.FROM_DISPENSER;
 
             if (SettingKey.ENTITY_DONT_STACK_IF_ACTIVE_RAIDER.get() && (NMS_HANDLER.isActiveRaider(entity1) || NMS_HANDLER.isActiveRaider(entity2)))
@@ -355,6 +355,34 @@ public final class StackConditions {
 
     private StackConditions() {
 
+    }
+
+    // The flag lookups below are the highest-multiplicity code in the plugin: every candidate pair of every
+    // stacking pass runs them. When the entity being tested is a stack's own head entity, the stack has the
+    // answer cached and the persistent data container never has to be touched. Anything else (a throwaway
+    // entity materialized out of a stack's storage, for example) falls back to the container.
+    private static boolean isUnstackable(StackedEntity stack, Entity entity) {
+        if (stack != null && stack.getEntity() == entity)
+            return stack.isUnstackable();
+        return PersistentDataUtils.isUnstackable(entity);
+    }
+
+    private static boolean isSpawnedFromSpawner(StackedEntity stack, Entity entity) {
+        if (stack != null && stack.getEntity() == entity)
+            return stack.isSpawnedFromSpawner();
+        return PersistentDataUtils.isSpawnedFromSpawner(entity);
+    }
+
+    private static boolean isSpawnedFromTrialSpawner(StackedEntity stack, Entity entity) {
+        if (stack != null && stack.getEntity() == entity)
+            return stack.isSpawnedFromTrialSpawner();
+        return PersistentDataUtils.isSpawnedFromTrialSpawner(entity);
+    }
+
+    private static boolean isSpawnedFromDispenser(StackedEntity stack, Entity entity) {
+        if (stack != null && stack.getEntity() == entity)
+            return stack.isSpawnedFromDispenser();
+        return PersistentDataUtils.isSpawnedFromDispenser(entity);
     }
 
     public static List<StackCondition<?>> getEligibleConditions(Class<? extends Entity> entityClass) {
