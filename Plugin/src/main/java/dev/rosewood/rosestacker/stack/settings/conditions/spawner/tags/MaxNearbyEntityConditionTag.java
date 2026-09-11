@@ -9,8 +9,8 @@ import dev.rosewood.rosestacker.stack.StackedEntity;
 import dev.rosewood.rosestacker.stack.StackedSpawner;
 import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
 import dev.rosewood.rosestacker.stack.settings.conditions.spawner.ConditionTag;
-import java.util.Collection;
 import java.util.List;
+import java.util.function.Predicate;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
@@ -38,19 +38,24 @@ public class MaxNearbyEntityConditionTag extends ConditionTag {
         Block block = stackedSpawner.getBlock();
         List<EntityType> entityTypes = stackedSpawner.getSpawnerTile().getSpawnerType().getEntityTypes();
 
-        Collection<Entity> nearbyEntities = this.entityCacheManager.getNearbyEntities(
-                block.getLocation().add(0.5, 0.5, 0.5),
-                detectionRange,
-                entity -> entityTypes.contains(entity.getType()));
+        // This only ever needs to know whether there are fewer than N entities nearby, so count with an
+        // early exit instead of collecting every nearby entity into a Set that is thrown away after a
+        // size comparison. The counter stops as soon as the threshold is reached, which is the common
+        // case on a saturated farm.
+        Predicate<Entity> predicate = entity -> entityTypes.contains(entity.getType());
+        double x = block.getX() + 0.5, y = block.getY() + 0.5, z = block.getZ() + 0.5;
 
+        int nearbyAmount;
         if (SettingKey.SPAWNER_MAX_NEARBY_ENTITIES_INCLUDE_STACKS.get()) {
-            return nearbyEntities.stream().mapToInt(x -> {
-                StackedEntity stackedEntity = this.stackManager.getStackedEntity((LivingEntity) x);
+            nearbyAmount = this.entityCacheManager.countNearbyEntities(block.getWorld(), x, y, z, detectionRange, predicate, entity -> {
+                StackedEntity stackedEntity = this.stackManager.getStackedEntity((LivingEntity) entity);
                 return stackedEntity == null ? 1 : stackedEntity.getStackSize();
-            }).sum() < this.maxNearbyEntities;
+            }, this.maxNearbyEntities);
         } else {
-            return nearbyEntities.size() < this.maxNearbyEntities;
+            nearbyAmount = this.entityCacheManager.countNearbyEntities(block.getWorld(), x, y, z, detectionRange, predicate, this.maxNearbyEntities);
         }
+
+        return nearbyAmount < this.maxNearbyEntities;
     }
 
     @Override

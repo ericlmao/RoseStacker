@@ -28,6 +28,13 @@ import org.bukkit.entity.Player;
 
 public class StackedSpawner extends Stack<SpawnerStackSettings> {
 
+    /**
+     * How many known-good spawn offsets are remembered per spawner. Mob farms are static, so the offsets
+     * that produced a valid spawn location last cycle nearly always work again; sized to cover the most
+     * spawn locations a single spawn cycle asks for before it has to sample randomly.
+     */
+    public static final int MAX_CACHED_SPAWN_OFFSETS = 16;
+
     private int size;
     private StackedSpawnerTile spawnerTile;
     private CreatureSpawner cachedCreatureSpawner;
@@ -38,6 +45,11 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
     private SpawnerStackSettings stackSettings;
     private String lastDisplayKey;
     private List<String> lastDisplayStrings;
+    private Location hologramLocation;
+    private double hologramLocationOffset;
+    private long[] cachedSpawnOffsets;
+    private int cachedSpawnOffsetCount;
+    private SpawnerType snapshotSpawnerType;
 
     public StackedSpawner(int size, Block spawner, boolean placedByPlayer, boolean updateDisplay) {
         if (spawner.getType() != Material.SPAWNER)
@@ -215,8 +227,61 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
         return !hologram.getWatchers().isEmpty();
     }
 
+    /**
+     * @return the Location of this spawner's hologram
+     * @implNote The returned Location is shared and must not be mutated by callers. Block#getLocation
+     *           allocates, and this is called for every loaded spawner on every hologram cycle from both
+     *           {@link #needsDisplayUpdate} and {@link #updateDisplay}. The block never moves, so the only
+     *           input that can change is the configured height offset, which is compared against the one
+     *           the cached Location was built with so a reload picks the new value up.
+     */
     public Location getHologramLocation() {
-        return this.block.getLocation().add(0.5, SettingKey.SPAWNER_DISPLAY_TAGS_HEIGHT_OFFSET.get(), 0.5);
+        double heightOffset = SettingKey.SPAWNER_DISPLAY_TAGS_HEIGHT_OFFSET.get();
+        Location hologramLocation = this.hologramLocation;
+        if (hologramLocation == null || this.hologramLocationOffset != heightOffset) {
+            hologramLocation = this.block.getLocation().add(0.5, heightOffset, 0.5);
+            this.hologramLocationOffset = heightOffset;
+            this.hologramLocation = hologramLocation;
+        }
+        return hologramLocation;
+    }
+
+    /**
+     * @return how many packed spawn offsets are currently cached for this spawner
+     */
+    public int getCachedSpawnOffsetCount() {
+        return this.cachedSpawnOffsetCount;
+    }
+
+    /**
+     * Gets a cached spawn offset. The value is opaque here; the spawning method owns the packing.
+     *
+     * @param index The index of the offset, must be less than {@link #getCachedSpawnOffsetCount}
+     * @return the packed spawn offset at the index
+     */
+    public long getCachedSpawnOffset(int index) {
+        return this.cachedSpawnOffsets[index];
+    }
+
+    /**
+     * Replaces the cached spawn offsets with the first entries of a buffer. The buffer is copied, so the
+     * caller is free to keep reusing it.
+     *
+     * @param offsets The buffer of packed offsets to cache
+     * @param count How many entries of the buffer to keep, at most {@link #MAX_CACHED_SPAWN_OFFSETS}
+     */
+    public void setCachedSpawnOffsets(long[] offsets, int count) {
+        count = Math.min(count, MAX_CACHED_SPAWN_OFFSETS);
+        if (count <= 0) {
+            this.cachedSpawnOffsetCount = 0;
+            return;
+        }
+
+        if (this.cachedSpawnOffsets == null)
+            this.cachedSpawnOffsets = new long[MAX_CACHED_SPAWN_OFFSETS];
+
+        System.arraycopy(offsets, 0, this.cachedSpawnOffsets, 0, count);
+        this.cachedSpawnOffsetCount = count;
     }
 
     @Override
@@ -236,24 +301,38 @@ public class StackedSpawner extends Stack<SpawnerStackSettings> {
             return;
 
         if (!spawnerType.isEmpty()) {
-            if (this.stackSettings.getSpawnCountStackSizeMultiplier() != -1) this.spawnerTile.setSpawnCount(this.size * this.stackSettings.getSpawnCountStackSizeMultiplier());
-            if (this.stackSettings.getMaxSpawnDelay() != -1) this.spawnerTile.setMaxSpawnDelay(this.stackSettings.getMaxSpawnDelay());
-            if (this.stackSettings.getMinSpawnDelay() != -1) this.spawnerTile.setMinSpawnDelay(this.stackSettings.getMinSpawnDelay());
-            if (this.stackSettings.getPlayerActivationRange() != -1) this.spawnerTile.setRequiredPlayerRange(this.stackSettings.getPlayerActivationRange());
-            if (this.stackSettings.getSpawnRange() != -1) this.spawnerTile.setSpawnRange(this.stackSettings.getSpawnRange());
+            // Each of these setters sends its own block update to every player tracking the spawner, so a
+            // single stack size change used to cost up to six broadcasts; batch them into one
+            this.spawnerTile.setUpdatesSuppressed(true);
+            try {
+                if (this.stackSettings.getSpawnCountStackSizeMultiplier() != -1) this.spawnerTile.setSpawnCount(this.size * this.stackSettings.getSpawnCountStackSizeMultiplier());
+                if (this.stackSettings.getMaxSpawnDelay() != -1) this.spawnerTile.setMaxSpawnDelay(this.stackSettings.getMaxSpawnDelay());
+                if (this.stackSettings.getMinSpawnDelay() != -1) this.spawnerTile.setMinSpawnDelay(this.stackSettings.getMinSpawnDelay());
+                if (this.stackSettings.getPlayerActivationRange() != -1) this.spawnerTile.setRequiredPlayerRange(this.stackSettings.getPlayerActivationRange());
+                if (this.stackSettings.getSpawnRange() != -1) this.spawnerTile.setSpawnRange(this.stackSettings.getSpawnRange());
 
-            int delay;
-            if (resetDelay) {
-                delay = StackerUtils.randomInRange(this.spawnerTile.getMinSpawnDelay(), this.spawnerTile.getMaxSpawnDelay());
-            } else {
-                delay = this.spawnerTile.getDelay();
+                int delay;
+                if (resetDelay) {
+                    delay = StackerUtils.randomInRange(this.spawnerTile.getMinSpawnDelay(), this.spawnerTile.getMaxSpawnDelay());
+                } else {
+                    delay = this.spawnerTile.getDelay();
+                }
+
+                this.spawnerTile.setDelay(delay);
+            } finally {
+                this.spawnerTile.setUpdatesSuppressed(false);
             }
-
-            this.spawnerTile.setDelay(delay);
         }
 
-        if (this.block.getState() instanceof CreatureSpawner creatureSpawner)
-            this.cachedCreatureSpawner = creatureSpawner;
+        // Block#getState copies the spawner block entity's NBT into a fresh snapshot, and this runs on
+        // every stack size change. The snapshot is documented as very stale already and only the spawned
+        // type is read off it, so only re-take it when that type changed.
+        if (this.cachedCreatureSpawner == null || !spawnerType.equals(this.snapshotSpawnerType)) {
+            if (this.block.getState() instanceof CreatureSpawner creatureSpawner) {
+                this.cachedCreatureSpawner = creatureSpawner;
+                this.snapshotSpawnerType = spawnerType;
+            }
+        }
     }
 
 }

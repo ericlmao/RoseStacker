@@ -5,6 +5,7 @@ import dev.rosewood.rosestacker.nms.spawner.SpawnerType;
 import dev.rosewood.rosestacker.nms.spawner.StackedSpawnerTile;
 import dev.rosewood.rosestacker.nms.util.ExtraUtils;
 import dev.rosewood.rosestacker.spawning.MobSpawningMethod;
+import dev.rosewood.rosestacker.spawning.NearbyPlayerSnapshot;
 import dev.rosewood.rosestacker.stack.StackedSpawner;
 import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
 import java.util.Optional;
@@ -30,6 +31,8 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     private Object cachedSpawnPotentials;
     private Object cachedNextSpawnData;
     private SpawnerType cachedSpawnerType;
+    private Object cachedSpawningMethodData;
+    private MobSpawningMethod cachedSpawningMethod;
 
     private final SpawnerBlockEntity blockEntity;
     private final BlockPos blockPos;
@@ -39,6 +42,8 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     private boolean playersNearby;
     private int playersTimeSinceLastCheck;
     private boolean checkedInitialConditions;
+    private boolean updatesSuppressed;
+    private boolean pendingUpdate;
 
     public StackedSpawnerTileImpl(BaseSpawner old, SpawnerBlockEntity blockEntity, StackedSpawner stackedSpawner) {
         this.blockEntity = blockEntity;
@@ -105,20 +110,39 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
 
     private void trySpawns(boolean onlyCheckConditions) {
         try {
-            if (this.nextSpawnData != null) {
+            if (this.nextSpawnData == null)
+                return;
+
+            // The spawn data is replaced wholesale rather than mutated, so an identity check on it is
+            // enough to know the parsed entity type is still current. This used to parse a NamespacedKey
+            // on every spawn, and allocate a MobSpawningMethod (and with it a Random) along with it; the
+            // spawning method is kept instead, it caches per-spawner scratch state between spawns.
+            if (this.cachedSpawningMethodData != this.nextSpawnData) {
+                this.cachedSpawningMethodData = this.nextSpawnData;
                 String typeId = this.nextSpawnData.getEntityToSpawn().getString("id");
-                if (!typeId.isEmpty()) {
-                    EntityType entityType = ExtraUtils.getEntityTypeFromKey(NamespacedKey.fromString(typeId));
-                    if (entityType != null)
-                        new MobSpawningMethod(entityType).spawn(this.stackedSpawner, onlyCheckConditions);
+                EntityType entityType = typeId.isEmpty() ? null : ExtraUtils.getEntityTypeFromKey(NamespacedKey.fromString(typeId));
+                if (entityType == null) {
+                    this.cachedSpawningMethod = null;
+                } else if (this.cachedSpawningMethod == null || this.cachedSpawningMethod.getEntityType() != entityType) {
+                    this.cachedSpawningMethod = new MobSpawningMethod(entityType);
                 }
             }
+
+            if (this.cachedSpawningMethod != null)
+                this.cachedSpawningMethod.spawn(this.stackedSpawner, onlyCheckConditions);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
     private void updateTile() {
+        // Every setter on this tile sends a block update to each tracking player, and a single stack size
+        // change calls up to six of them; batch them into one update instead
+        if (this.updatesSuppressed) {
+            this.pendingUpdate = true;
+            return;
+        }
+
         Level level = this.blockEntity.getLevel();
         if (level != null) {
             level.blockEntityChanged(this.blockPos);
@@ -143,7 +167,12 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     private boolean isNearPlayer(Level level, BlockPos blockPos) {
         if (this.stackedSpawner.getStackSettings().hasUnlimitedPlayerActivationRange())
             return true;
-        return level.hasNearbyAlivePlayer((double) blockPos.getX() + 0.5D, (double) blockPos.getY() + 0.5D, (double) blockPos.getZ() + 0.5D, Math.max(this.stackedSpawner.getStackSettings().getPlayerActivationRange(), 0.1));
+
+        // Level#hasNearbyAlivePlayer walks every player in the level, and this runs for every loaded spawner
+        // every SPAWNER_PLAYER_CHECK_FREQUENCY ticks, so the cost grows with spawners times players. The
+        // shared snapshot is one pass over the player list per world per tick and primitive math here.
+        return NearbyPlayerSnapshot.hasNearbyPlayer(level.getWorld(), (double) blockPos.getX() + 0.5D, (double) blockPos.getY() + 0.5D, (double) blockPos.getZ() + 0.5D,
+                Math.max(this.stackedSpawner.getStackSettings().getPlayerActivationRange(), 0.1));
     }
 
     private void loadOld(BaseSpawner baseSpawner) {
@@ -295,6 +324,15 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     public void setSpawnRange(int spawnRange) {
         this.spawnRange = spawnRange;
         this.updateTile();
+    }
+
+    @Override
+    public void setUpdatesSuppressed(boolean suppressed) {
+        this.updatesSuppressed = suppressed;
+        if (!suppressed && this.pendingUpdate) {
+            this.pendingUpdate = false;
+            this.updateTile();
+        }
     }
 
     @Override
