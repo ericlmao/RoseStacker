@@ -31,6 +31,10 @@ public class SpawnerStackSettings extends StackSettings {
     private final int playerActivationRange;
     private final int spawnRange;
     private final List<ConditionTag> spawnRequirements;
+    // spawnRequirements never changes after construction, so partitioning it here keeps every spawn
+    // attempt from copying the list, streaming it, and removeAll-ing it again
+    private final List<ConditionTag> perSpawnConditions;
+    private final List<ConditionTag> spawnerConditions;
     private final List<String> itemLoreSingular;
     private final List<String> itemLorePlural;
     private final NamespacedKey tooltipStyleKey;
@@ -81,6 +85,18 @@ public class SpawnerStackSettings extends StackSettings {
             this.spawnRange = -1;
             this.spawnRequirements = List.of();
         }
+
+        List<ConditionTag> perSpawnConditions = new ArrayList<>(this.spawnRequirements.size());
+        List<ConditionTag> spawnerConditions = new ArrayList<>(this.spawnRequirements.size());
+        for (ConditionTag conditionTag : this.spawnRequirements) {
+            if (conditionTag.isRequiredPerSpawn()) {
+                perSpawnConditions.add(conditionTag);
+            } else {
+                spawnerConditions.add(conditionTag);
+            }
+        }
+        this.perSpawnConditions = List.copyOf(perSpawnConditions);
+        this.spawnerConditions = List.copyOf(spawnerConditions);
 
         this.itemLoreSingular = this.settingsConfiguration.getStringList("item-lore-singular");
         this.itemLorePlural = this.settingsConfiguration.getStringList("item-lore-plural");
@@ -156,6 +172,20 @@ public class SpawnerStackSettings extends StackSettings {
 
     public List<ConditionTag> getSpawnRequirements() {
         return this.spawnRequirements;
+    }
+
+    /**
+     * @return the spawn requirements that have to be checked at every candidate spawn location
+     */
+    public List<ConditionTag> getPerSpawnConditions() {
+        return this.perSpawnConditions;
+    }
+
+    /**
+     * @return the spawn requirements that only have to be checked once against the spawner itself
+     */
+    public List<ConditionTag> getSpawnerConditions() {
+        return this.spawnerConditions;
     }
 
     public int getSpawnCountStackSizeMultiplier() {

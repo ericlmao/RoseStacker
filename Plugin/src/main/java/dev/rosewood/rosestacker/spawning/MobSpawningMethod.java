@@ -37,7 +37,6 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -67,12 +66,10 @@ public class MobSpawningMethod implements SpawningMethod {
         SpawnerStackSettings stackSettings = stackedSpawner.getStackSettings();
         EntityStackSettings entityStackSettings = RoseStacker.getInstance().getManager(StackSettingManager.class).getEntityStackSettings(this.entityType);
 
-        // Mob spawning logic
-        List<ConditionTag> spawnRequirements = new ArrayList<>(stackSettings.getSpawnRequirements());
-
-        // Check general spawner conditions
-        List<ConditionTag> perSpawnConditions = spawnRequirements.stream().filter(ConditionTag::isRequiredPerSpawn).toList();
-        spawnRequirements.removeAll(perSpawnConditions);
+        // Mob spawning logic. The two condition lists are partitioned once when the stack settings are
+        // loaded; this used to copy, stream, and removeAll the requirement list on every spawn attempt.
+        List<ConditionTag> spawnRequirements = stackSettings.getSpawnerConditions();
+        List<ConditionTag> perSpawnConditions = stackSettings.getPerSpawnConditions();
 
         // Spawn the mobs
         int spawnAmount;
@@ -90,11 +87,20 @@ public class MobSpawningMethod implements SpawningMethod {
         StackManager stackManager = RoseStacker.getInstance().getManager(StackManager.class);
 
         Runnable spawnTask = () -> {
+            // StackedSpawner#getLocation allocates a Location on every call, and the attempt loop below
+            // used to build two or three of them per attempt just to get at the spawner's coordinates
+            Block spawnerBlock = stackedSpawner.getBlock();
+            World spawnerWorld = spawnerBlock.getWorld(); // Stack#getWorld builds a Location just to read this
+            int spawnerX = spawnerBlock.getX(), spawnerY = spawnerBlock.getY(), spawnerZ = spawnerBlock.getZ();
+
             // Make sure the chunk is still loaded
-            if (!stackedSpawner.getWorld().isChunkLoaded(stackedSpawner.getLocation().getBlockX() >> 4, stackedSpawner.getLocation().getBlockZ() >> 4))
+            if (!spawnerWorld.isChunkLoaded(spawnerX >> 4, spawnerZ >> 4))
                 return;
 
-            Set<ConditionTag> invalidSpawnConditions = spawnRequirements.stream().filter(x -> !x.check(stackedSpawner, stackedSpawner.getBlock())).collect(Collectors.toCollection(HashSet::new));
+            Set<ConditionTag> invalidSpawnConditions = new HashSet<>();
+            for (ConditionTag conditionTag : spawnRequirements)
+                if (!conditionTag.check(stackedSpawner, spawnerBlock))
+                    invalidSpawnConditions.add(conditionTag);
             if (SettingKey.SPAWNER_SPAWN_ONLY_PLAYER_PLACED.get() && !stackedSpawner.isPlacedByPlayer())
                 invalidSpawnConditions.add(NotPlayerPlacedConditionTag.INSTANCE);
 
@@ -116,14 +122,14 @@ public class MobSpawningMethod implements SpawningMethod {
                 int yOffset = !SettingKey.SPAWNER_USE_VERTICAL_SPAWN_RANGE.get() ? this.random.nextInt(3) - 1 : this.random.nextInt(spawnRange * 2 + 1) - spawnRange;
                 int zOffset = this.random.nextInt(spawnRange * 2 + 1) - spawnRange;
 
-                Location spawnLocation = stackedSpawner.getLocation().clone().add(xOffset + 0.5, yOffset, zOffset + 0.5);
+                Location spawnLocation = new Location(spawnerWorld, spawnerX + xOffset + 0.5, spawnerY + yOffset, spawnerZ + zOffset + 0.5);
                 if (invalidLocations.containsKey(spawnLocation)) {
                     // Decrease max failed spawn attempts if the location is invalid to avoid spinning forever
                     maxFailedSpawnAttempts--;
                     continue;
                 }
 
-                Block target = stackedSpawner.getLocation().clone().add(xOffset, yOffset, zOffset).getBlock();
+                Block target = spawnerWorld.getBlockAt(spawnerX + xOffset, spawnerY + yOffset, spawnerZ + zOffset);
 
                 unmetConditions.clear();
                 boolean invalid = false;

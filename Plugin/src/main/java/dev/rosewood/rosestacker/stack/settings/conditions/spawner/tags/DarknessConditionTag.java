@@ -17,7 +17,7 @@ public class DarknessConditionTag extends ConditionTag {
 
     @Override
     public boolean check(StackedSpawner stackedSpawner, Block spawnBlock) {
-        Material type = EntityUtils.getLazyBlockMaterial(spawnBlock.getLocation());
+        Material type = EntityUtils.getLazyBlockMaterial(spawnBlock.getWorld(), spawnBlock.getX(), spawnBlock.getY(), spawnBlock.getZ());
         if (StackerUtils.isOccluding(type))
             return false;
 

@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -87,6 +88,16 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
     // Without track/untrack events we cannot tell when a client dropped our tag, so fall back to resending
     private static volatile boolean nametagStateTrackingEnabled = true;
+
+    /**
+     * A player and a stack that both stand still can only have the wall between them change when blocks
+     * change, so the ray is skipped and re-run this many nametag cycles later. At the default nametag
+     * update frequency of 30 ticks that is a worst case of 4.5 seconds, in the same range as the 5 seconds
+     * HologramManager already allows its watchers, and less than the staleness the chunk snapshot cache
+     * this replaces used to add on top of it.
+     */
+    private static final int IDLE_LINE_OF_SIGHT_RECHECK_CYCLES = 3;
+    private static final double MOVEMENT_THRESHOLD_SQRD = 0.25 * 0.25;
 
     public static void setNametagStateTrackingEnabled(boolean enabled) {
         nametagStateTrackingEnabled = enabled;
@@ -610,9 +621,13 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         if (this.stackedEntityDataStorage.getType() == StackedEntityDataStorageType.SIMPLE)
             return this.stackSettings.testCanStackWith(this, this, true);
 
+        // The wrapper around the deserialized copy only exists so the conditions can read getEntity() and
+        // getStackSize(); nothing ever reads its data storage. Building an NBT storage for it re-serialized
+        // the copy straight back to NBT for every stack on every unstack cycle, so use a SIMPLE storage,
+        // which stores nothing up front and reports the same stack size of 1.
         NMSHandler nmsHandler = NMSAdapter.getHandler();
         LivingEntity entity = this.stackedEntityDataStorage.peek().createEntity(this.entity.getLocation(), false, this.entity.getType());
-        StackedEntity stackedEntity = new StackedEntity(entity, nmsHandler.createEntityDataStorage(entity, RoseStacker.getInstance().getManager(StackManager.class).getEntityDataStorageType(entity.getType())), false);
+        StackedEntity stackedEntity = new StackedEntity(entity, nmsHandler.createEntityDataStorage(entity, StackedEntityDataStorageType.SIMPLE), false);
         return this.stackSettings.testCanStackWith(this, stackedEntity, true);
     }
 
@@ -701,6 +716,66 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         if (!nametagStateTrackingEnabled)
             return true;
 
+        NametagState state = this.getNametagState(playerId);
+        if (state.sent && state.visible == visible && Objects.equals(state.displayName, displayName))
+            return false;
+
+        state.sent = true;
+        state.displayName = displayName;
+        state.visible = visible;
+        return true;
+    }
+
+    /**
+     * Runs a line of sight check between a player and this stack, reusing the previous answer while both
+     * ends of the ray have stayed put and the answer is not too old.
+     * <p>
+     * The wall check was the most expensive part of the nametag pass, and in a farm most stacks and most
+     * players are standing still between one pass and the next, so the ray is only walked when something
+     * actually moved or the cached answer has aged out.
+     *
+     * @param playerId The player looking at this stack
+     * @param playerX The player's eye X
+     * @param playerY The player's eye Y
+     * @param playerZ The player's eye Z
+     * @param targetX The X of the point on this stack being looked at
+     * @param targetY The Y of the point on this stack being looked at
+     * @param targetZ The Z of the point on this stack being looked at
+     * @param check Walks the ray, only called when the cached answer cannot be reused
+     * @return true if the player can see this stack's nametag
+     */
+    public boolean checkLineOfSight(UUID playerId, double playerX, double playerY, double playerZ,
+                                    double targetX, double targetY, double targetZ, BooleanSupplier check) {
+        // The per-player states are only pruned by the track/untrack events; without them, don't create any
+        if (!nametagStateTrackingEnabled)
+            return check.getAsBoolean();
+
+        NametagState state = this.getNametagState(playerId);
+        if (state.lineOfSightChecked
+                && ++state.lineOfSightIdleCycles < IDLE_LINE_OF_SIGHT_RECHECK_CYCLES
+                && distanceSquared(playerX, playerY, playerZ, state.lastPlayerX, state.lastPlayerY, state.lastPlayerZ) <= MOVEMENT_THRESHOLD_SQRD
+                && distanceSquared(targetX, targetY, targetZ, state.lastTargetX, state.lastTargetY, state.lastTargetZ) <= MOVEMENT_THRESHOLD_SQRD)
+            return state.lineOfSight;
+
+        boolean lineOfSight = check.getAsBoolean();
+        state.lineOfSightChecked = true;
+        state.lineOfSightIdleCycles = 0;
+        state.lineOfSight = lineOfSight;
+        state.lastPlayerX = playerX;
+        state.lastPlayerY = playerY;
+        state.lastPlayerZ = playerZ;
+        state.lastTargetX = targetX;
+        state.lastTargetY = targetY;
+        state.lastTargetZ = targetZ;
+        return lineOfSight;
+    }
+
+    private static double distanceSquared(double x1, double y1, double z1, double x2, double y2, double z2) {
+        double dx = x1 - x2, dy = y1 - y2, dz = z1 - z2;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private NametagState getNametagState(UUID playerId) {
         Map<UUID, NametagState> sent = this.sentNametags;
         if (sent == null) {
             synchronized (this) {
@@ -710,12 +785,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             }
         }
 
-        NametagState previous = sent.get(playerId);
-        if (previous != null && previous.visible() == visible && Objects.equals(previous.displayName(), displayName))
-            return false;
-
-        sent.put(playerId, new NametagState(displayName, visible));
-        return true;
+        return sent.computeIfAbsent(playerId, x -> new NametagState());
     }
 
     /**
@@ -738,7 +808,23 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             sent.clear();
     }
 
-    private record NametagState(String displayName, boolean visible) { }
+    /**
+     * What one player last received for this stack, and the last wall check run for them. Only ever
+     * touched from the stack entity's own thread, so the fields are plain.
+     */
+    private static final class NametagState {
+
+        private boolean sent;
+        private String displayName;
+        private boolean visible;
+
+        private boolean lineOfSightChecked;
+        private boolean lineOfSight;
+        private int lineOfSightIdleCycles;
+        private double lastPlayerX, lastPlayerY, lastPlayerZ;
+        private double lastTargetX, lastTargetY, lastTargetZ;
+
+    }
 
     @Override
     public void updateDisplaySafely() {

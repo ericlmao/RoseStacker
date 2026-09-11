@@ -17,7 +17,7 @@ public class LightnessConditionTag extends ConditionTag {
 
     @Override
     public boolean check(StackedSpawner stackedSpawner, Block spawnBlock) {
-        Material type = EntityUtils.getLazyBlockMaterial(spawnBlock.getLocation());
+        Material type = EntityUtils.getLazyBlockMaterial(spawnBlock.getWorld(), spawnBlock.getX(), spawnBlock.getY(), spawnBlock.getZ());
         return !StackerUtils.isOccluding(type) && spawnBlock.getLightLevel() > 8;
     }
 

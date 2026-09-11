@@ -7,7 +7,6 @@ import dev.rosewood.rosestacker.utils.EntityUtils;
 import java.util.List;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
 
 public class OnGroundConditionTag extends ConditionTag {
 
@@ -17,7 +16,7 @@ public class OnGroundConditionTag extends ConditionTag {
 
     @Override
     public boolean check(StackedSpawner stackedSpawner, Block spawnBlock) {
-        Material type = EntityUtils.getLazyBlockMaterial(spawnBlock.getRelative(BlockFace.DOWN).getLocation());
+        Material type = EntityUtils.getLazyBlockMaterial(spawnBlock.getWorld(), spawnBlock.getX(), spawnBlock.getY() - 1, spawnBlock.getZ());
         return type.isSolid();
     }
 
