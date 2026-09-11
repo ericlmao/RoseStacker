@@ -5,6 +5,7 @@ import dev.rosewood.rosestacker.nms.spawner.SpawnerType;
 import dev.rosewood.rosestacker.nms.spawner.StackedSpawnerTile;
 import dev.rosewood.rosestacker.nms.util.ExtraUtils;
 import dev.rosewood.rosestacker.spawning.MobSpawningMethod;
+import dev.rosewood.rosestacker.spawning.NearbyPlayerSnapshot;
 import dev.rosewood.rosestacker.stack.StackedSpawner;
 import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
 import java.util.ArrayList;
@@ -42,6 +43,8 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     private boolean playersNearby;
     private int playersTimeSinceLastCheck;
     private boolean checkedInitialConditions;
+    private boolean updatesSuppressed;
+    private boolean pendingUpdate;
 
     public StackedSpawnerTileImpl(BaseSpawner old, SpawnerBlockEntity blockEntity, StackedSpawner stackedSpawner) {
         this.blockEntity = blockEntity;
@@ -134,6 +137,13 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     }
 
     private void updateTile() {
+        // Every setter on this tile sends a block update to each tracking player, and a single stack size
+        // change calls up to six of them; batch them into one update instead
+        if (this.updatesSuppressed) {
+            this.pendingUpdate = true;
+            return;
+        }
+
         Level level = this.blockEntity.getLevel();
         if (level != null) {
             level.blockEntityChanged(this.blockPos);
@@ -158,7 +168,12 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     private boolean isNearPlayer(Level level, BlockPos blockPos) {
         if (this.stackedSpawner.getStackSettings().hasUnlimitedPlayerActivationRange())
             return true;
-        return level.hasNearbyAlivePlayer((double) blockPos.getX() + 0.5D, (double) blockPos.getY() + 0.5D, (double) blockPos.getZ() + 0.5D, Math.max(this.stackedSpawner.getStackSettings().getPlayerActivationRange(), 0.1));
+
+        // Level#hasNearbyAlivePlayer walks every player in the level, and this runs for every loaded spawner
+        // every SPAWNER_PLAYER_CHECK_FREQUENCY ticks, so the cost grows with spawners times players. The
+        // shared snapshot is one pass over the player list per world per tick and primitive math here.
+        return NearbyPlayerSnapshot.hasNearbyPlayer(level.getWorld(), (double) blockPos.getX() + 0.5D, (double) blockPos.getY() + 0.5D, (double) blockPos.getZ() + 0.5D,
+                Math.max(this.stackedSpawner.getStackSettings().getPlayerActivationRange(), 0.1));
     }
 
     private void loadOld(BaseSpawner baseSpawner) {
@@ -309,6 +324,15 @@ public class StackedSpawnerTileImpl extends BaseSpawner implements StackedSpawne
     public void setSpawnRange(int spawnRange) {
         this.spawnRange = spawnRange;
         this.updateTile();
+    }
+
+    @Override
+    public void setUpdatesSuppressed(boolean suppressed) {
+        this.updatesSuppressed = suppressed;
+        if (!suppressed && this.pendingUpdate) {
+            this.pendingUpdate = false;
+            this.updateTile();
+        }
     }
 
     @Override

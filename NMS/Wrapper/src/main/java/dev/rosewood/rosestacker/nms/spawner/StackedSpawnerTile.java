@@ -133,4 +133,16 @@ public interface StackedSpawnerTile {
      */
     PersistentDataContainer getPersistentDataContainer();
 
+    /**
+     * Suppresses the block update that each setter on this tile normally sends to every tracking player,
+     * so that a batch of changes costs one update instead of one per setter.
+     * Calls must be paired; passing false again sends a single update if any were suppressed.
+     *
+     * @param suppressed true to start suppressing updates, false to resume and flush a pending update
+     */
+    @ApiStatus.Experimental
+    default void setUpdatesSuppressed(boolean suppressed) {
+
+    }
+
 }
