@@ -1,0 +1,1591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoseStacker MSPT Reduction - Implementation Report - 2026-09-11</title>
+<style>
+  :root {
+    --ink: #16191d;
+    --muted: #5b636e;
+    --rule: #dfe3e8;
+    --soft: #f5f7f9;
+    --page: #ffffff;
+    --link: #14538a;
+    --codebg: #eef1f4;
+  }
+  .viz-root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --ring: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --annot: #898781;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      --ink: #f2f2ef;
+      --muted: #a8a69d;
+      --rule: #2f2f2d;
+      --soft: #171716;
+      --page: #0d0d0d;
+      --link: #7db4ee;
+      --codebg: #1f1f1e;
+    }
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --ring: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --annot: #898781;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #f2f2ef;
+    --muted: #a8a69d;
+    --rule: #2f2f2d;
+    --soft: #171716;
+    --page: #0d0d0d;
+    --link: #7db4ee;
+    --codebg: #1f1f1e;
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --ring: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --annot: #898781;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.62;
+    color: var(--ink);
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 36px 30px 90px;
+    background: var(--page);
+  }
+  h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 {
+    font-size: 20px; margin: 44px 0 14px; padding-bottom: 6px;
+    border-bottom: 2px solid var(--ink); letter-spacing: -0.01em;
+  }
+  h3 { font-size: 16px; margin: 26px 0 10px; }
+  h4 { font-size: 14px; margin: 20px 0 6px; }
+  p { margin: 10px 0; }
+  a { color: var(--link); }
+  ul, ol { margin: 10px 0; padding-left: 24px; }
+  li { margin: 5px 0; }
+
+  .titleblock {
+    border: 1px solid var(--rule); border-top: 4px solid var(--ink);
+    padding: 20px 24px; border-radius: 3px; margin-bottom: 26px;
+  }
+  .titleblock .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  .meta { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .meta table { margin: 0; }
+  .meta td { border: 0; padding: 2px 18px 2px 0; font-size: 13px; }
+  .meta td:first-child { color: var(--ink); font-weight: 600; white-space: nowrap; }
+
+  table { width: 100%; border-collapse: collapse; margin: 14px 0 18px; font-size: 13.5px; }
+  th, td { border: 1px solid var(--rule); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); font-weight: 600; }
+  td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  tbody tr:nth-child(even) { background: color-mix(in srgb, var(--soft) 55%, transparent); }
+
+  code, pre, .path {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  code, .path { background: var(--codebg); padding: 1px 4px; border-radius: 3px; font-size: 12.5px; }
+  pre {
+    background: #1e2229; color: #e8eaed; padding: 13px 15px; border-radius: 4px;
+    overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 12px 0;
+  }
+  pre .c { color: #8b98a5; }
+
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 3px; margin-right: 4px;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .ok   { background: #edf7ed; color: #1f6127; border-color: #c8e4c9; }
+  .dev  { background: #fff8e1; color: #7a5600; border-color: #ecd9a0; }
+  .part { background: #fdeceb; color: #a11c15; border-color: #f3c4c1; }
+  .neutral { background: transparent; color: var(--muted); border-color: var(--rule); }
+  :root[data-theme="dark"] .ok   { background: #122112; color: #7fd07f; border-color: #24421f; }
+  :root[data-theme="dark"] .dev  { background: #231c07; color: #e9c46a; border-color: #4a3a10; }
+  :root[data-theme="dark"] .part { background: #2a1211; color: #f0938d; border-color: #52211e; }
+
+  .note {
+    background: var(--soft); border: 1px solid var(--rule); border-left: 4px solid #9aa2ad;
+    padding: 12px 16px; border-radius: 3px; margin: 16px 0; font-size: 14px;
+  }
+  .note strong:first-child { display: block; margin-bottom: 4px; }
+  .tldr { border-left-color: #c0392b; }
+  .warnbox { border-left-color: #d68910; }
+  .toc { columns: 2; column-gap: 34px; font-size: 13.5px; }
+  .toc ul { margin: 0; padding-left: 20px; }
+  .toc li { margin: 2px 0; break-inside: avoid; }
+  footer { margin-top: 60px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 12.5px; color: var(--muted); }
+
+  .themetoggle {
+    position: absolute; top: 18px; right: 24px; font: inherit; font-size: 12px;
+    background: var(--soft); color: var(--ink); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 4px 10px; cursor: pointer;
+  }
+
+  /* ---- chart components ---- */
+  .figpair { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 20px; align-items: start; margin: 22px 0 10px; }
+  @media (max-width: 900px) { .figpair { grid-template-columns: 1fr; } }
+  figure.chart {
+    margin: 0; background: var(--surface-1); border: 1px solid var(--ring);
+    border-radius: 5px; padding: 14px 16px 10px;
+  }
+  figure.chart .ctitle { font-size: 14px; font-weight: 600; color: var(--text-primary); margin: 0 0 2px; }
+  figure.chart .csub { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 6px; font-size: 12.5px; color: var(--text-secondary); }
+  .legend span.k { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .plot { position: relative; }
+  .plot svg { display: block; width: 100%; height: auto; }
+  .tip {
+    position: absolute; pointer-events: none; opacity: 0; transition: opacity .08s linear;
+    background: var(--surface-1); border: 1px solid var(--ring); border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.14); padding: 7px 9px; font-size: 12px;
+    color: var(--text-primary); white-space: nowrap; z-index: 5; line-height: 1.45;
+  }
+  .tip .th { color: var(--text-secondary); font-weight: 600; margin-bottom: 3px; }
+  .tip .r { display: flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+  .tip .r i { width: 10px; height: 3px; border-radius: 2px; }
+  figcaption { font-size: 12px; color: var(--text-secondary); margin-top: 8px; line-height: 1.5; }
+  figcaption .est { font-weight: 700; color: var(--text-primary); }
+  table.arith { font-size: 12.5px; margin: 0; }
+  table.arith th, table.arith td { padding: 5px 8px; }
+  table.arith caption { text-align: left; font-size: 12px; color: var(--muted); padding-bottom: 6px; }
+
+  @media print {
+    body { max-width: none; padding: 0; font-size: 10.5pt; }
+    h2 { break-after: avoid; }
+    table, pre, .note, .figpair { break-inside: avoid; }
+    .themetoggle { display: none; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<button class="themetoggle" id="themetoggle" type="button">Toggle dark</button>
+
+<div class="titleblock">
+  <h1>RoseStacker: MSPT Reduction - Implementation Report</h1>
+  <p class="sub">All 21 findings of the 2026-09-10 proposal, implemented, reviewed and hardened</p>
+  <div class="meta">
+    <table>
+      <tr><td>Date</td><td>2026-09-11</td></tr>
+      <tr><td>Branch</td><td><code>perf/proposal-impl-2026-09-10</code> (fork <code>ericlmao/RoseStacker</code>)</td></tr>
+      <tr><td>Base</td><td><code>master</code> @ <code>b52f7668</code></td></tr>
+      <tr><td>Pull request</td><td><a href="https://github.com/ericlmao/RoseStacker/pull/14">ericlmao/RoseStacker#14</a></td></tr>
+      <tr><td>Diff</td><td>112 files changed, 9,820 insertions, 1,734 deletions, 35 commits</td></tr>
+      <tr><td>Build</td><td><span class="path">~/Downloads/RoseStacker-1.5.42-perf-2026-09-10.jar</span></td></tr>
+      <tr><td>Target</td><td>UniverseSpigot 1.21.11, 130+ players, ~12k living entities</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="note tldr">
+  <strong>TL;DR</strong>
+  Every finding in the proposal (A1-A4, B1-B4, C1-C5, D1-D5, E1-E2, F1) is implemented on
+  <code>perf/proposal-impl-2026-09-10</code> and open as
+  <a href="https://github.com/ericlmao/RoseStacker/pull/14">PR #14</a>. The central change is F1: a single
+  budgeted main-thread task (<code>BatchedMainThreadExecutor</code>) now drains all periodic work under
+  <code>misc-settings.main-thread-task-budget-ms</code> (default 2.0), and the cheap culls that used to run
+  inside those tasks run off-thread before anything is scheduled. With
+  <code>misc-settings.async-display-updates</code> (default true) the nametag and hologram passes leave the
+  main thread entirely on Paper. On the world tick threads, the spawner path no longer serializes every mob to
+  NBT twice (B1), no longer runs an 800-probe random search on a saturated farm (B2), and no longer walks the
+  player list per spawner (B3). An independent review of the merged diff found one blocker and ten smaller
+  items; all eleven are fixed in the final eight commits.
+  <br><br>
+  <strong style="display:inline">To validate:</strong> deploy the jar, let the server settle for 15 minutes,
+  take a spark profile at a comparable player count, and compare the nodes listed in
+  <a href="#validate">section 6</a>. Both new settings can be turned off at runtime with <code>/rs reload</code>
+  to A/B the change without a restart.
+</div>
+
+<div class="note">
+  <strong>What is measured and what is modelled</strong>
+  The baseline numbers in this report are measured (spark, 2026-09-05, 135 players, ~16 TPS). Everything in
+  <a href="#model">section 4</a> is a <em>model</em>: an arithmetic projection from the code that shipped, not a
+  measurement of it. No post-change profile exists yet. Every chart states its assumptions and shows the
+  arithmetic beside it so the numbers can be re-derived or disputed.
+</div>
+
+<h2 id="toc">Contents</h2>
+<div class="toc">
+  <ul>
+    <li><a href="#shipped">1. What was implemented</a></li>
+    <li><a href="#mechanism">2. Mechanisms, by group</a></li>
+    <li><a href="#review">3. Review and hardening</a></li>
+    <li><a href="#model">4. Theoretical performance model</a></li>
+    <li><a href="#behaviour">5. Behaviour changes to be aware of</a></li>
+    <li><a href="#validate">6. How to validate on the live server</a></li>
+    <li><a href="#appendix-a">Appendix A - Commits</a></li>
+    <li><a href="#appendix-b">Appendix B - New and changed APIs</a></li>
+  </ul>
+</div>
+
+<h2 id="shipped">1. What was implemented</h2>
+
+<p>
+  All 21 findings are addressed. Eleven landed exactly as proposed; nine landed with a deviation worth knowing
+  about; one (B4) is partial. Two bugs found while reading the surrounding code were fixed as well and are
+  listed under "out of scope" below. The <em>Files</em> column counts the distinct files touched by the commits
+  listed for that finding, deduplicated; a single commit often serves more than one finding (the NMS storage
+  commits each touch fifteen version modules), so the column does not sum to 112.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:42px">ID</th>
+      <th>What shipped</th>
+      <th style="width:158px">Commits</th>
+      <th style="width:112px">Status</th>
+      <th class="num" style="width:52px">Files</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>A1</td>
+      <td>Stacking pass evaluates every cheap cull (settings, NPC, removal, <code>hasMoved()</code>, WorldGuard) off-thread and submits survivors in batches of 64 instead of one Bukkit task per stacked entity.</td>
+      <td><code>bcfc1eb3</code>, <code>fc9a84d1</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">12</td>
+    </tr>
+    <tr>
+      <td>A2</td>
+      <td>Unstack pass skips non-ticking heads and stacks whose modified tick has not moved, and answers the comparison from the head entity when the storage reports its head entry is representative.</td>
+      <td><code>ac469788</code>, <code>bcfc1eb3</code>, <code>65dd7b51</code>, <code>fc9a84d1</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">30</td>
+    </tr>
+    <tr>
+      <td>A3</td>
+      <td>Nametag and hologram passes send their packets from the async threads using a tracked-player set maintained by <code>EntityTrackingListener</code>; hologram watcher updates run on their own async timer.</td>
+      <td><code>bcfc1eb3</code>, <code>fd39bcfd</code>, <code>01244f15</code>, <code>eb3ec1ac</code>, <code>bdb5beb9</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">16</td>
+    </tr>
+    <tr>
+      <td>A4</td>
+      <td>Orphan rescan no longer copies every entity in the world; only the rare stack creations it finds go through the executor.</td>
+      <td><code>bcfc1eb3</code>, <code>fc9a84d1</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">12</td>
+    </tr>
+    <tr>
+      <td>B1</td>
+      <td><code>NBTStackedEntityDataStorage</code> captures its base tag lazily on first use instead of calling <code>saveWithoutId</code> in the constructor, so the ~99% of stacks that never grow past one never pay for a save.</td>
+      <td><code>f3ab00ae</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">15</td>
+    </tr>
+    <tr>
+      <td>B2</td>
+      <td>Per-spawner cache of the offsets that produced a valid spawn, checked before any random sampling; invalid-position bookkeeping keyed by a packed long; one spawning method per entity type; <code>ThreadLocalRandom</code>; last-matched-stack shortcut; precomputed per-type intersecting-block bounds.</td>
+      <td><code>a75430fb</code>, <code>2d5473ea</code>, <code>c8250deb</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">18</td>
+    </tr>
+    <tr>
+      <td>B3</td>
+      <td>Spawner player activation checked against one per-world <code>NearbyPlayerSnapshot</code> refreshed at most once per tick, instead of walking the level's player list per spawner.</td>
+      <td><code>8927f67f</code>, <code>bdb5beb9</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">23</td>
+    </tr>
+    <tr>
+      <td>B4</td>
+      <td><code>EntityCacheManager#countNearbyEntities</code> counts with an early exit and an optional weigher, so the max-nearby-entities condition stops at the Nth entity instead of collecting the whole set.</td>
+      <td><code>b88405b6</code></td>
+      <td><span class="badge part">Partial</span></td>
+      <td class="num">1</td>
+    </tr>
+    <tr>
+      <td>C1</td>
+      <td>UUID key dropped from stored tags on 1.21+ so <code>createCreature</code>'s own UUID survives; hologram line UUIDs derived from the entity id; legacy modules draw from <code>ExtraUtils.insecureRandomUuid()</code> rather than the shared synchronized <code>SecureRandom</code>.</td>
+      <td><code>8bc9a623</code>, <code>58d27ac7</code>, <code>2b3d88a2</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">61</td>
+    </tr>
+    <tr>
+      <td>C2</td>
+      <td><code>NBTEntityDataEntry</code> takes an <em>owned</em> flag so entries built from <code>rebuild()</code> edit in place instead of deep-copying the tag a second time; <code>DataUtils#readStackedEntity</code> uses <code>readFully</code> instead of three byte-at-a-time loops.</td>
+      <td><code>8bc9a623</code>, <code>15d19ab3</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">39</td>
+    </tr>
+    <tr>
+      <td>C3</td>
+      <td><code>StackedEntityDataStorage#damageAll(double)</code> edits the stored <code>Health</code> float and materializes only the members that died.</td>
+      <td><code>4da6697d</code>, <code>decf055a</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">18</td>
+    </tr>
+    <tr>
+      <td>C4</td>
+      <td><code>EntityDataAccessor</code> instances hoisted to static finals; the hologram update packet built once per line instead of once per watcher.</td>
+      <td><code>58d27ac7</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">30</td>
+    </tr>
+    <tr>
+      <td>C5</td>
+      <td>Storage backed by an <code>ArrayDeque</code> under one explicit lock with a volatile size mirror, replacing the <code>LinkedBlockingQueue</code> and its redundant second lock acquisition.</td>
+      <td><code>6f3b5882</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">16</td>
+    </tr>
+    <tr>
+      <td>D1</td>
+      <td>Bounded display-string cache on <code>EntityStackSettings</code> / <code>BlockStackSettings</code> keyed on everything the message depends on and invalidated by the locale generation counter; <code>StackerUtils#formatNumber</code> made <code>ThreadLocal</code> (the shared <code>NumberFormat</code> was a live thread-safety bug).</td>
+      <td><code>15d19ab3</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">9</td>
+    </tr>
+    <tr>
+      <td>D2</td>
+      <td><code>NamespacedKey</code> instances built once lazily; <code>StackedEntity</code> / <code>StackedItem</code> cache the flags themselves, invalidated through the <code>PersistentDataUtils</code> setters and on head-entity replacement.</td>
+      <td><code>15d19ab3</code>, <code>31c448cf</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">9</td>
+    </tr>
+    <tr>
+      <td>D3</td>
+      <td>Per-chunk cache of whether any overlapping region defines the <code>rosestacker</code> flag, with a 30 second expiry; only chunks that do fall through to the exact region query.</td>
+      <td><code>c41c8181</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">4</td>
+    </tr>
+    <tr>
+      <td>D4</td>
+      <td>Hologram <code>Location</code> cached per stacked spawner and rebuilt only when the configured height offset changes; tile updates suppressed for the duration of a property batch so one size change sends one block update instead of six; the <code>CreatureSpawner</code> snapshot re-taken only on type change.</td>
+      <td><code>e8f1fb9a</code>, <code>8927f67f</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">18</td>
+    </tr>
+    <tr>
+      <td>D5</td>
+      <td>Item pass runs its culls before the nearby scan, reads the unstackable flag from the stack, drops the intermediate stream and set, and rejects neighbours on material and "has meta" before <code>ItemStack#isSimilar</code> runs.</td>
+      <td><code>bcfc1eb3</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">12</td>
+    </tr>
+    <tr>
+      <td>E1</td>
+      <td>Autosave skips stacks that are byte-for-byte what was last written (size plus modified tick) and submits the rest to the executor in groups.</td>
+      <td><code>0e8a6db2</code>, <code>fc9a84d1</code></td>
+      <td><span class="badge dev">Deviation</span></td>
+      <td class="num">4</td>
+    </tr>
+    <tr>
+      <td>E2</td>
+      <td>Entity cache refresh builds the replacement map off to the side and publishes it by reference swap; cells keyed by a packed long (12 bits world index, 8 bits cell y) instead of a record holding a world name.</td>
+      <td><code>2d2cd50c</code>, <code>ad159694</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">1</td>
+    </tr>
+    <tr>
+      <td>F1</td>
+      <td><code>BatchedMainThreadExecutor</code>: one repeating main-thread task draining a queue under a per-tick budget with carry-over, a 40-tick anti-starvation deadline, per-job exception isolation, and per-region routing on Folia.</td>
+      <td><code>bcfc1eb3</code>, <code>fc9a84d1</code></td>
+      <td><span class="badge ok">Implemented</span></td>
+      <td class="num">12</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>1.1 Deviations from the proposal</h3>
+
+<table>
+  <thead><tr><th style="width:42px">ID</th><th>Deviation</th></tr></thead>
+  <tbody>
+    <tr><td>A2</td><td>The head-entity fast path is <em>bounded</em>, which the proposal did not call for. A full materialized comparison is forced every 8 unstack passes, and an <code>Ageable</code> head whose adult state disagrees with the stored base takes the full comparison immediately. See <a href="#review">section 3</a>.</td></tr>
+    <tr><td>A3</td><td>Not unconditional. The async path is behind <code>misc-settings.async-display-updates</code> and falls back to the scheduled path on Folia, on Spigot, when the tracking events are unavailable, or when the setting is off. Wall checks now read block data off the main thread, which is a documented behaviour change rather than a pure move.</td></tr>
+    <tr><td>A4</td><td>The rescan itself stays on the main thread. Iterating the level's entity list off-thread is not safe, so only the stack creations it finds were moved onto the executor. The win is the removal of the full entity-list copy, not the removal of the scan.</td></tr>
+    <tr><td>B1</td><td>The proposal's second half - "reuse the tag on merge so the spawner path saves once instead of twice" - turned out to need no code. Once the base is lazy, the throwaway per-mob storage never captures a base at all, so the second save disappears as a consequence of the first change. No merge-time tag reuse was added.</td></tr>
+    <tr><td>B2</td><td><code>finalizeSpawn</code> behaviour is intentionally unchanged. The proposal floated skipping or deferring it for mobs that merge straight into a stack; that would change equipment and variant rolls that players can observe, so it was left alone. The win comes from the offset cache and the allocation removals only.</td></tr>
+    <tr><td>B4</td><td>Partial. The condition's own scan is now a counting walk with an early exit, but it is still a <em>second</em> walk: the spawn path's later nearby scan is not shared with it. Sharing the two would require threading a result through the condition-tag interface, which was judged out of proportion to the remaining cost.</td></tr>
+    <tr><td>C1</td><td>Version-split. The UUID key is dropped from stored tags only on 1.21+, where <code>javap</code> over the compiled-against Spigot jars confirms <code>Entity#load</code> only overwrites the UUID when the key is present. The six modules for 1.20.6 and earlier still write a UUID; they only swap the source from <code>SecureRandom</code> to <code>ExtraUtils.insecureRandomUuid()</code>. The dead capital-A <code>Attributes</code> plumbing was likewise removed on 1.21+ only, since the older modules genuinely still write that spelling.</td></tr>
+    <tr><td>C3</td><td>Hardened during review into a copy-on-write: <code>damageAll</code> builds a new tag per survivor rather than mutating the published ones, because readers snapshot tag references under the lock and then read them outside it. It also calls <code>markStorageModified</code> so a health-only change is visible to the autosave dirty check.</td></tr>
+    <tr><td>C4</td><td>The per-line packet hoist applies on 1.19+ only. On 1.16 to 1.18 the per-player visibility flag is part of the payload, so those three modules keep building a packet per watcher. The accessor hoist applies everywhere.</td></tr>
+    <tr><td>E1</td><td>Only the periodic autosave skips unchanged stacks. Chunk unload, world transfer, reload and shutdown still write every stack unconditionally, because anything skipped on those paths would be lost rather than merely delayed.</td></tr>
+  </tbody>
+</table>
+
+<div class="note warnbox">
+  <strong>Build coverage caveat</strong>
+  The six legacy NMS modules (1.16 through 1.20.6) were edited by hand and are <em>not</em> compiler-verified in
+  this environment: their Spigot artifacts are not present locally, so the Gradle build skips them. The changes
+  there are mechanical mirrors of the verified 1.21+ modules, but they should be built once against a full
+  artifact set before release. The 1.21+ and 26.x modules do compile.
+</div>
+
+<h4>Out of scope, fixed anyway</h4>
+<ul>
+  <li><code>e0a28758</code> - <code>saveEntityToTag</code> tested its <code>ProblemReporter.Collector</code> before handing it to <code>saveWithoutId</code>, so the collector was always empty and no save problem could ever be reported. Five modules.</li>
+  <li><code>11d6d5c9</code> - the same inverted ordering in <code>NBTEntityDataEntry#createEntity</code>, where the reporter was asked before <code>Entity#load</code> ran. Five modules.</li>
+</ul>
+
+<h2 id="mechanism">2. Mechanisms, by group</h2>
+
+<h3>2.1 Group A - Scheduled task volume (main thread)</h3>
+
+<p>
+  RoseGarden's <code>BukkitSchedulerWrapper</code> implements <code>isEntityThread(Entity)</code> and
+  <code>isLocationThread(Location)</code> as <code>Bukkit.isPrimaryThread()</code> and delegates
+  <code>runTaskAtEntity</code> / <code>runTaskAtLocation</code> to a plain <code>runTask</code>. On a non-Folia
+  server, every <code>ThreadUtils.runOnEntity()</code> call from one of the async passes is therefore a Bukkit
+  main-thread task. The stacking pass made one per stacked entity every 100 ticks, the unstack pass one per
+  stack every 50 ticks, the nametag pass one per stack per cycle, and the hologram pass one per player per
+  cycle. The main thread drains that entire burst in the tick after it is submitted, so the plugin's worst-case
+  per-tick cost had no ceiling and grew with entity count. MSPT is decided by the worst ticks, so the burst
+  matters more than the mean.
+</p>
+<p>
+  The fix has two halves. First, every cull that already gated the real work now runs on the async pass thread
+  before anything is scheduled: null settings, the NPC check, the removal check, <code>hasMoved()</code> and the
+  WorldGuard test. On a farm-heavy world nearly every stack fails <code>hasMoved()</code>, because AI-disabled
+  mobs do not move, which means the burst of tasks was almost entirely no-ops.
+  <code>hasMoved()</code> records the position it reads, so it deliberately runs exactly once per stack per
+  cycle and is not repeated on the main thread. Second, the survivors are submitted to
+  <code>BatchedMainThreadExecutor</code> in batches of 64.
+</p>
+<p>
+  The unstack pass adds two more culls: head entities that Paper reports are not ticking cannot have changed
+  since the last pass, and stacks whose modified tick has not moved reach the verdict they reached last time.
+  Idle stacks are still re-checked every fourth cycle. On top of that, <code>shouldStayStacked</code> takes a
+  cheap self-compare path when the storage reports its head entry is <em>representative</em> - see 2.3.
+</p>
+<p>
+  Two allocations were removed from paths that run tens of thousands of times per cycle. The <code>RS_new</code>
+  Bukkit metadata flag, whose <code>hasMetadata</code> built a UUID string and took a synchronized lookup on
+  every removal check, is a plain field on the stack objects. The Guava removed-entity cache, which read
+  <code>System.nanoTime()</code> on every access, is a plain map of removal timestamps pruned by the passes that
+  already run, with the same five second semantics.
+</p>
+<p>
+  Display updates are the other half. On Paper, <code>EntityTrackingListener</code> maintains the set of players
+  tracking each stack, so the nametag pass never has to call <code>Entity#getTrackedBy()</code> on the entity's
+  thread; the stacking tool flag is maintained from the events that can change it instead of being read in a
+  task per player per cycle; and both the nametag metadata packet and the stacking tool particles are sent from
+  the async pass. <code>StackedEntity#updateDisplay</code> sends to the tracked set directly.
+  <code>HologramManager</code>'s watcher update runs on its own async timer. All of it sits behind
+  <code>misc-settings.async-display-updates</code>.
+</p>
+
+<h3>2.2 Group B - Spawner tick and spawn path (world tick threads)</h3>
+
+<p>
+  <strong>B1, the lazy base.</strong> <code>NBTStackedEntityDataStorage</code> called
+  <code>Entity#saveWithoutId</code> in its <code>LivingEntity</code> constructor, so every mob that spawned,
+  loaded from a chunk or split off a stack walked its whole component tree through a <code>TagValueOutput</code>
+  and allocated a tag tree for it. The base is only ever used as a template for new entries and as the
+  deduplication baseline, and roughly 99% of stacks never grow past size 1, so that save was thrown away almost
+  every time. The spawner path was worse: it saved each spawned mob once into its own throwaway storage and then
+  a second time into the stack it immediately merged into. The field is now captured on first use by
+  <code>getBase()</code>. Capturing later is at least as accurate as capturing earlier: it is still the head
+  entity's own data. The deserializing constructor keeps its eager base, since the stored bytes are the only
+  copy of it that exists.
+</p>
+<p>
+  <strong>B2, the attempt loop.</strong> A saturated farm ran the whole random search every spawn cycle - up to
+  <code>max-failed-spawn-attempts</code> times <code>spawn-range</code> squared, 800 block probes with the
+  defaults - and each attempt allocated a <code>Location</code> for the invalid-position multimap (hashing three
+  doubles) plus an array list per failed position. Farms are static, so the offsets that produced a valid spawn
+  are remembered on the <code>StackedSpawner</code> and re-checked before any random sampling. Offsets that no
+  longer pass are dropped, ones the search finds take their place, and ones the search stopped short of are
+  carried over; a stale entry costs a single wasted block probe. Sixteen offsets covers the most locations a
+  cycle asks for. Separately, each spawn allocated a <code>MobSpawningMethod</code> and with it a
+  <code>Random</code> whose constructor runs a seed-uniquifier CAS loop, and re-parsed the entity type from a
+  <code>NamespacedKey</code>; the tile now keeps one spawning method per entity type and draws from
+  <code>ThreadLocalRandom</code>. Spawning into nearby stacks tries the last match first and falls back to the
+  scan.
+</p>
+<p>
+  <strong>B3, player activation.</strong> Spawner activation went through the level's own nearby-player check,
+  which walks every player in the level, run per loaded stacked spawner every
+  <code>player-check-frequency</code> ticks: a cost that grows as spawners times players, paid on the world tick
+  thread before any spawning work happens. Each world now keeps one <code>NearbyPlayerSnapshot</code> of
+  activating player positions, refreshed at most once per tick and only when something asks, and the check is
+  primitive math. A snapshot can be one tick stale, which cannot change the outcome of a check that already only
+  runs every tenth tick against a radius measured in whole blocks. It is also version independent, unlike the
+  server's own spatial structures.
+</p>
+<p>
+  <strong>B4, the nearby-entity count.</strong> <code>MaxNearbyEntityConditionTag</code> ran a full
+  <code>getNearbyEntities</code> scan per spawner per spawn cycle and threw the result away after comparing its
+  size against a threshold. <code>EntityCacheManager#countNearbyEntities</code> walks the same cells without
+  collecting anything and stops as soon as the limit is reached, with an optional weigher so the include-stacks
+  path can sum stack sizes and keep the early exit.
+</p>
+
+<h3>2.3 Group C - Entity data storage and the NMS layer</h3>
+
+<p>
+  <strong>The representative-head shortcut (A2/C-adjacent).</strong> <code>shouldStayStacked</code> built a
+  complete NMS entity out of the front storage entry for every stack of size &gt; 1, every unstack cycle, purely
+  to compare it against the stack it came from: a tag merge plus <code>createCreature</code> plus
+  <code>finalizeSpawn</code> plus <code>entity.load</code>, for thousands of idle spawner-fed stacks every 2.5
+  seconds. Entries are stored deduplicated against the base, and the base already has every
+  <code>UNSAFE_NBT_KEYS</code> entry stripped. An entry whose remaining keys are all unsafe keys therefore
+  differs from the head entity only in fields the stack conditions never consult - health, equipment,
+  attributes, brain - so the head entity is an equally valid stand-in.
+  <code>StackedEntityDataStorage#isHeadRepresentative()</code> reports exactly that; the simple storages report
+  true unconditionally, since each of their entries is already a stripped copy of the head. The unsafe key list
+  gained a set view so the test does not linear-scan sixty strings per key per stack per cycle.
+</p>
+<p>
+  <strong>Tag copies and UUIDs.</strong> <code>rebuild()</code> already allocates a fresh
+  <code>CompoundTag</code> and merges the base and the member tag into it, and every caller wrapped that
+  private, freshly built tag in an <code>NBTEntityDataEntry</code> - which then copied the whole tag again.
+  Entries now carry an <em>owned</em> flag: entries built from a <code>rebuild()</code> result edit in place,
+  while entries built from a <code>LivingEntity</code> or an externally supplied tag still copy, because those
+  tags are handed back out through <code>get()</code>. <code>createEntity</code> also stored a fresh
+  <code>UUID.randomUUID()</code> into the tag on every call; on 1.21+ that is unnecessary and removing the key
+  instead keeps the entity's own UUID for free, taking a synchronized <code>SecureRandom</code> draw off the
+  unstack and kill paths.
+</p>
+<p>
+  <strong>Shared damage.</strong> When a damage cause is listed in <code>share-damage-conditions</code>,
+  <code>EntityListener#onEntityDamage</code> fed a health-subtracting function to <code>removeIf</code>. For NBT
+  storage that built a complete NMS entity out of every member to read and write one float, then saved every
+  survivor back out: a 500-mob stack standing in lava produced 500 <code>createCreature</code> calls and 500
+  <code>saveWithoutId</code> calls per damage tick, on the main thread, inside an event handler.
+  <code>damageAll(double)</code> now edits the <code>Health</code> float and materializes only the members that
+  died, since the loot code needs real entities for those. Members added by <code>addClones()</code> inherit
+  from a base with health stripped, so their health comes from one entity built out of the base, once per stack.
+</p>
+<p>
+  <strong>Backing collection.</strong> The queue was a <code>LinkedBlockingQueue</code>, so every add, remove and
+  iteration took the queue's internal lock and allocated a node per entry, while the bulk operations already
+  wrapped themselves in <code>synchronized (this.data)</code>. It is an <code>ArrayDeque</code> under that one
+  lock now; snapshots are taken inside the lock and tag merging and entity construction happen outside it.
+  <code>size()</code> and <code>isEmpty()</code> read a volatile int mirror written only under the lock, so they
+  stay a plain field read on a path that runs constantly.
+</p>
+
+<h3>2.4 Group D - Caching layers</h3>
+
+<p>
+  <code>PersistentDataUtils</code> allocated a <code>NamespacedKey</code> on every flag read, and the
+  constructor lowercases and validates both halves before <code>PersistentDataContainer#has</code> rebuilds the
+  <code>namespace:key</code> string again. The stacking conditions run those reads for every candidate pair of
+  every stacking pass, which made this the highest-multiplicity allocation in the plugin. Keys are built once,
+  lazily; the flags themselves are cached on <code>StackedEntity</code> and <code>StackedItem</code>, cleared
+  through the setters and on head-entity replacement. <code>StackConditions</code> only reads a cached flag when
+  the entity it is testing is that stack's own head.
+</p>
+<p>
+  Display strings had the same shape of waste: <code>updateDisplay()</code> clears the memo on every call, and
+  every spawner spawn that merges into a stack triggers one, so each rebuild ran a placeholder replacement plus
+  four colorify regex passes to produce a string thousands of other stacks already have. There is now a bounded
+  cache keyed on everything the message depends on, invalidated when the locale generation counter changes.
+</p>
+<p>
+  The WorldGuard hook ran a fresh <code>RegionQuery</code> for every listener call and every stack candidate,
+  even though the <code>rosestacker</code> flag defaults to true and can only ever deny a location inside a
+  region that explicitly sets it. The hook now caches per chunk whether any overlapping region defines the flag
+  (counting parent regions and the global region) and answers the common "nothing here cares" case from a map.
+  There is no cross-version region change event, so entries expire 30 seconds after they are computed and the
+  cache is cleared on reload; a region edit is honoured within that window.
+</p>
+<p>
+  Two per-spawner items: <code>getHologramLocation</code> allocated a <code>Location</code> through
+  <code>Block#getLocation</code> on every call, twice per hologram cycle per loaded spawner, and
+  <code>updateSpawnerProperties</code> called up to six tile setters each of which broadcast a block update, so
+  one stack size change produced six broadcasts. The Location is cached and rebuilt only when the configured
+  height offset changes; the tile can have updates suppressed for a batch and sends a single update at the end.
+  The <code>CreatureSpawner</code> snapshot, documented as very stale already, is only re-taken when the
+  spawner's type changes.
+</p>
+
+<h3>2.5 Group E - Persistence and spikes</h3>
+
+<p>
+  The autosave walks every stacked entity and item in the world in a single tick and, for each stack larger than
+  one, serializes and GZIPs its whole storage into the entity's persistent data container. On a settled server
+  most stacks have not changed at all since the last autosave 15 minutes ago, so nearly all of that produces
+  byte-for-byte the payload that is already stored. It does not move the average much, but it is one of the
+  largest single-tick stalls the plugin produces. <code>StackedEntity</code> now records what it looked like
+  when it was last written and the autosave skips stacks that still look that way. The check is deliberately
+  conservative: it compares stack size as well as modified tick, so a storage mutation that went around
+  <code>markModified</code> still counts as a change. Whatever is left goes to the executor in groups.
+</p>
+<p>
+  The entity cache refresh cleared the live cell map and refilled it in place every 60 ticks, so every reader in
+  that window saw a partially rebuilt cache while holding the same lock, and the clear plus rehash was paid on
+  the tick thread. It now builds the replacement off to the side and swaps the reference in when complete;
+  readers grab the reference once and iterate a consistent snapshot no more stale than before. Cells used to be
+  keyed by a record holding the world name, hashing a String per insert and per lookup; worlds now get a dense
+  index and the key packs that index with the cell coordinates into a single long.
+</p>
+
+<h3>2.6 Group F - The batched main-thread executor</h3>
+
+<p>
+  <code>BatchedMainThreadExecutor</code> is one repeating main-thread task that drains a queue under
+  <code>misc-settings.main-thread-task-budget-ms</code> (default 2.0), carrying whatever does not fit to the
+  next tick. Three properties matter:
+</p>
+<ul>
+  <li><strong>No starvation.</strong> A job that has waited <code>MAX_JOB_AGE_TICKS</code> (40) runs regardless
+    of the budget, so a permanently saturated queue still makes progress on its oldest work.</li>
+  <li><strong>Per-job isolation.</strong> An exception in one job no longer stops the drain, and after
+    <code>fc9a84d1</code> each per-stack action inside a batch runs in its own guard, so one failing stack
+    cannot take the other 63 in its batch with it. That mattered specifically for the unstack pass, where the
+    job is what releases a stack's claim in <code>pendingEntityUnstackChecks</code>: a skipped job meant that
+    stack was never checked again while its entity lived.</li>
+  <li><strong>Folia.</strong> There is no single main thread to drain from, so jobs are still routed to the
+    region that owns their entity or location. The budget setting has no effect there.</li>
+</ul>
+<p>
+  <code>stop()</code> counts and logs any jobs it discards when called off the main thread. That branch is
+  latent today - <code>StackManager#disable</code> stops the executor from the main thread - but a silent queue
+  drop is expensive enough (held unstack claims) that it should not go by quietly if that ever changes.
+</p>
+
+<h2 id="review">3. Review and hardening</h2>
+
+<p>
+  The merged diff was reviewed independently after the feature work was complete. The review found <strong>one
+  blocker and ten smaller items</strong>. All eleven are fixed in the final eight commits
+  (<code>65dd7b51</code> through <code>fc9a84d1</code>). None of them were found by testing; they were found by
+  reading. That is worth stating plainly, because it means the same class of defect may still be present in the
+  parts of the diff the review did not reach, in particular the six hand-edited legacy NMS modules.
+</p>
+
+<h3>3.1 The blocker</h3>
+
+<p>
+  The <code>isHeadRepresentative</code> fast path compares a stack against its own head entity whenever the
+  front stored entry differs from the frozen base tag only in unsafe keys. That equivalence holds only while
+  the head entity still matches the base - and the head keeps being simulated after the base was captured. A
+  baby grows up. A sheep regrows its wool. A player tames an animal. The stack then compares equal to itself
+  forever and <strong>never splits</strong>, where master materialized an entry every cycle and split within one
+  unstack pass. For a spawner farm full of baby mobs that is a visible, permanent behaviour regression, not a
+  performance nuance.
+</p>
+<p>
+  The fix (<code>65dd7b51</code>) keeps the shortcut but bounds its staleness two ways:
+</p>
+<ul>
+  <li><strong>A cycle bound.</strong> <code>StackedEntity</code> counts the unstack passes it has answered from
+    the head and forces the full materialized comparison every <code>FULL_UNSTACK_CHECK_CYCLES</code> (8)
+    passes. The counter is incremented in <code>needsUnstackCheck</code>, including on passes the idle skip
+    drops, so the every-fourth-cycle idle recheck cannot stretch the deadline past 8 passes. At the default 50
+    tick unstack frequency that is <strong>20 seconds worst case</strong> before a diverged head splits, against
+    2.5 seconds on master.</li>
+  <li><strong>An age guard.</strong> Aging is the one divergence that happens with nothing touching the stack at
+    all, so it gets an immediate check: storages expose the adult state their entries are stored against through
+    <code>StackedEntityDataStorage#getBaseAdultState()</code>, the NBT implementations read it out of the lazily
+    captured base tag, and a head <code>Ageable</code> whose adult state disagrees takes the full comparison
+    right away.</li>
+</ul>
+<p>
+  The residual is a real, accepted regression: a stack whose head diverges in some way other than age can stay
+  merged for up to 20 seconds where master would have split it in 2.5. That is the price of the shortcut and it
+  is the number to watch if players report mismatched stacks.
+</p>
+
+<h3>3.2 The other ten</h3>
+
+<table>
+  <thead><tr><th style="width:92px">Commit</th><th>Issue</th><th>Resolution</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>decf055a</code></td>
+      <td>Shared damage mutated stored <code>CompoundTag</code>s in place under the data lock, but every reader (<code>isHeadRepresentative</code>, <code>getAll</code>, <code>serialize</code>, <code>forEachCapped</code>) only holds the lock long enough to snapshot the references and then reads outside it. A damage tick could rewrite the <code>Health</code> of a tag another thread was serializing.</td>
+      <td>Copy-on-write: <code>damageAll</code> builds a copy of each survivor with the new health, leaves the published tags untouched, and refills the deque from the copies.</td>
+    </tr>
+    <tr>
+      <td><code>decf055a</code></td>
+      <td>Health-only damage was invisible to the autosave dirty tracking, since <code>needsSave</code> looks at the modified tick and the stack size and <code>damageAll</code> changes neither when nothing dies.</td>
+      <td>New <code>StackedEntity#markStorageModified</code> for edits that go straight to the storage; <code>EntityListener</code> calls it after <code>damageAll</code>.</td>
+    </tr>
+    <tr>
+      <td><code>ad159694</code></td>
+      <td>Entity cache world indices were handed out monotonically from an <code>AtomicInteger</code> and never reused, with room for 1024. A server that loads and unloads worlds long enough wrapped the field and started answering one live world's nearby-entity lookups out of another live world's cells.</td>
+      <td>Indices are part of the published snapshot and rebuilt from scratch every refresh, numbered 0..n over the worlds stacking at that moment. The field also gets more room (12 bits of world, 8 of cell y); past 4096 worlds it logs once and leaves the excess uncached rather than aliasing.</td>
+    </tr>
+    <tr>
+      <td><code>eb3ec1ac</code></td>
+      <td>With async display on, the line-of-sight checks read live chunk block data off-thread. A read landing while the server resizes a section's palette throws, and the exception propagated out of the whole pass, costing every stack queued behind it its update for the cycle.</td>
+      <td>Each per-block read goes through a helper that catches <code>RuntimeException</code> and reports air, which is what an unloaded chunk already reports and what the walk treats as passable. Worst case is one block seen as passable for a few cycles.</td>
+    </tr>
+    <tr>
+      <td><code>01244f15</code></td>
+      <td><code>Hologram#hologramLines</code> was a plain <code>ArrayList</code> that <code>setTextSilently</code> and <code>createLines</code> clear and refill, while the per-version <code>HologramImpl</code> classes iterate it from another thread to build packets. A reader could see an empty or half-built list.</td>
+      <td><code>CopyOnWriteArrayList</code>, with both writers building their replacement into a local list and installing it with a single clear-and-addAll.</td>
+    </tr>
+    <tr>
+      <td><code>01244f15</code></td>
+      <td><code>HologramManager.PlayerHologramState</code> claimed only the player's own thread touched it, which the watcher timer thread stopped being true of.</td>
+      <td>Fields made volatile and the comment corrected. A lost <code>idleCycles</code> increment is possible and documented: it can only move a wall check one cycle.</td>
+    </tr>
+    <tr>
+      <td><code>fd39bcfd</code></td>
+      <td><code>HologramManager</code> reloads before <code>StackManager</code>, so caching the async-display flag at reload time read it before <code>StackManager</code> had set it, leaving the watcher pass on the scheduled path until the next reload. The stacking tool refresh also went through the global scheduler, which is not the thread that may read a player's inventory on Folia. Replacing a head entity kept the per-player nametag state and tracked set describing the old entity id.</td>
+      <td>Flag read where it is used; the tool flag only maintained when the async path will read it; head replacement drops the nametag state and tracked set with the cached flags.</td>
+    </tr>
+    <tr>
+      <td><code>bdb5beb9</code></td>
+      <td><code>/rs reload</code> emptied the stacking-tool holder set, and only the held-item events refilled it, so a player holding the tool across a reload lost their stack particles until they touched their hotbar. Separately, <code>NearbyPlayerSnapshot</code> kept one entry per world in a static map that nothing ever removed.</td>
+      <td><code>ItemUtils.refreshHoldingStackingTool</code> / <code>seedStackingToolHolders</code>, called from <code>StackManager.reload</code>; <code>NearbyPlayerSnapshot.clear()</code> from <code>StackerUtils.clearCache</code> and <code>forget(World)</code> from the world unload handler.</td>
+    </tr>
+    <tr>
+      <td><code>2d5473ea</code></td>
+      <td>Cached-offset re-checks are deliberately not counted as spawn attempts, but their failures were still tallied into <code>unmetConditionCounts</code> and <code>totalInvalidLocations</code>, mixing counts the denominator never saw into a ratio test. A spawner could blame a different condition than it does on master purely because of how many cached offsets went stale.</td>
+      <td>A stale cached offset is dropped and added to the invalid set as before, but contributes nothing to the tally. The report is computed from the random attempts alone.</td>
+    </tr>
+    <tr>
+      <td><code>fc9a84d1</code></td>
+      <td>A batch job runs up to 64 stacks, so anything thrown for one stack skipped every stack behind it - silently losing autosave writes, and in the unstack pass leaving claims in <code>pendingEntityUnstackChecks</code> held forever.</td>
+      <td>Per-stack guard inside the stack, unstack, orphan and save batches; <code>BatchedMainThreadExecutor#stop</code> logs a warning naming the number of jobs discarded when stopped off the main thread.</td>
+    </tr>
+    <tr>
+      <td><code>31c448cf</code></td>
+      <td>(Found in the same pass, fixed before the final review.) An entity's spawn reason is only set when it is added to the world, but the PDC flag cache could latch a "no" for a stack built before its entity was spawned - and with <code>only-stack-from-spawners</code> enabled that mob would refuse to stack for the rest of its life.</td>
+      <td>The two spawn-reason flags are only remembered once the entity is in the world; container-only flags are unaffected, since their setters clear the cache.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="model">4. Theoretical performance model</h2>
+
+<div class="note warnbox">
+  <strong>These charts are estimates, not measurements</strong>
+  No post-change spark profile exists yet. Everything below is arithmetic derived from the code that shipped and
+  from the 2026-09-05 baseline profile. Each chart states its assumptions and shows the model beside it. Treat
+  the shapes as the claim and the absolute numbers as illustrative. Where an assumption is a guess it is
+  labelled as one.
+</div>
+
+<h3>4.0 The baseline the model is anchored on</h3>
+
+<table style="max-width:640px">
+  <thead><tr><th>Thread</th><th>Path</th><th class="num">ms/tick</th></tr></thead>
+  <tbody>
+    <tr><td>Main</td><td>Bukkit sync scheduler, all RoseStacker tasks</td><td class="num">0.90</td></tr>
+    <tr><td>Overworld tick</td><td>Stacked spawner ticking</td><td class="num">0.86</td></tr>
+    <tr><td>End tick</td><td>Stacked spawner ticking</td><td class="num">0.80</td></tr>
+    <tr><td>Main</td><td>Line of sight, nametags</td><td class="num">0.51</td></tr>
+    <tr><td>Main</td><td>Line of sight, spawn conditions</td><td class="num">0.19</td></tr>
+    <tr><td>Main</td><td>Entity cache refresh</td><td class="num">0.17</td></tr>
+    <tr><td>Main</td><td>Line of sight, holograms</td><td class="num">0.16</td></tr>
+    <tr><td>Main</td><td>Unstack checks</td><td class="num">0.14</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Context for the trend: earlier profiles on the same server measured 6.61 ms/tick at 102 players (before PR 8)
+  and 2.9 ms/tick at 114 players (before PR 12). PR 13, already merged before this work, removed the
+  chunk-snapshot copies and part of the line-of-sight cost. The 0.90 ms/tick figure is what remains, and it is
+  what the after-lines below are projected against. Some of the reduction this work produces is a <em>move</em>
+  rather than a removal: display work taken off the main thread still costs CPU on the async threads, it just
+  stops counting toward MSPT.
+</p>
+
+<h3>4.1 Chart A - Main-thread scheduled tasks per 100-tick window</h3>
+
+<div class="figpair">
+  <figure class="chart viz-root">
+    <p class="ctitle">Bukkit main-thread tasks submitted per 100-tick window</p>
+    <p class="csub">By stacked entity count, at 135 players. Log y.</p>
+    <div class="legend" id="leg-a"></div>
+    <div class="plot" id="plot-a"></div>
+    <figcaption>
+      <span class="est">Estimate.</span> Assumes one task per stacked entity per stacking pass (100 ticks);
+      15% of stacks have size &gt; 1 and get one task per unstack pass (50 ticks); 3% of stacks are near a
+      player and get one nametag task per 30 ticks; 135 hologram tasks per 20 ticks; 135 player-snapshot tasks
+      per 30 ticks. The after-line is one drain task per tick with batched jobs and no display tasks, which is
+      what <code>async-display-updates=true</code> produces on Paper. A log y axis is used because the two
+      series differ by more than two orders of magnitude at production scale; on a linear axis the after-line
+      would be indistinguishable from the x axis.
+    </figcaption>
+  </figure>
+  <table class="arith">
+    <caption>Model: tasks per 100-tick window at N stacked entities</caption>
+    <thead><tr><th>Term</th><th class="num">Before</th><th class="num">After</th></tr></thead>
+    <tbody>
+      <tr><td>Stacking pass</td><td class="num">N</td><td class="num">0</td></tr>
+      <tr><td>Unstack pass (0.15N x 2)</td><td class="num">0.30 N</td><td class="num">0</td></tr>
+      <tr><td>Nametags (0.03N x 100/30)</td><td class="num">0.10 N</td><td class="num">0</td></tr>
+      <tr><td>Holograms (135 x 5)</td><td class="num">675</td><td class="num">0</td></tr>
+      <tr><td>Player snapshots (135 x 100/30)</td><td class="num">450</td><td class="num">0</td></tr>
+      <tr><td>Executor drain (1/tick)</td><td class="num">0</td><td class="num">100</td></tr>
+      <tr><th>Total</th><th class="num">1.40 N + 1,125</th><th class="num">100</th></tr>
+      <tr><td>at N = 2,000</td><td class="num">3,925</td><td class="num">100</td></tr>
+      <tr><td>at N = 12,000 (production)</td><td class="num">17,925</td><td class="num">100</td></tr>
+      <tr><td>at N = 20,000</td><td class="num">29,125</td><td class="num">100</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  The after-line is flat because the executor's task count is decoupled from entity count entirely: one
+  repeating task drains a queue of batched jobs. The <em>work</em> inside still scales with entity count, but it
+  is now bounded per tick rather than delivered in one burst. That is the subject of chart E.
+</p>
+
+<h3>4.2 Chart B - Projected main-thread ms/tick vs player count</h3>
+
+<div class="figpair">
+  <figure class="chart viz-root">
+    <p class="ctitle">RoseStacker main-thread cost, projected</p>
+    <p class="csub">ms/tick against concurrent players, entity count held at ~12,000.</p>
+    <div class="legend" id="leg-b"></div>
+    <div class="plot" id="plot-b"></div>
+    <figcaption>
+      <span class="est">Estimate.</span> Anchored on the measured 0.90 ms/tick at 135 players. The 0.90 is split
+      into a player-scaled display share, an entity-scaled periodic share and a fixed share, in the proportions
+      of the measured spark sub-nodes (0.67 : 0.33 : 0.17 out of 1.17 ms, giving 57% / 28% / 15%). Display cost
+      is assumed linear in players; periodic cost is assumed flat in players at fixed entity count. The
+      after-lines assume the display share moves fully off the main thread and the remaining share falls by 25%
+      (conservative) or 60% (optimistic), plus 0.02 ms/tick for the drain task itself. The 2.0 ms budget does
+      not appear as a line because it binds only during bursts, not in the steady state; at these levels the
+      queue drains well inside it. The after-lines are flat in players by construction, which is the claim being
+      made: the player-scaled work is the part that left the main thread.
+    </figcaption>
+  </figure>
+  <table class="arith">
+    <caption>Model: ms/tick at P players</caption>
+    <thead><tr><th>Term</th><th class="num">ms/tick</th></tr></thead>
+    <tbody>
+      <tr><td>Display share D (at P = 135)</td><td class="num">0.515</td></tr>
+      <tr><td>Periodic share S</td><td class="num">0.254</td></tr>
+      <tr><td>Fixed share F</td><td class="num">0.131</td></tr>
+      <tr><th>Before(P)</th><th class="num">0.515 (P/135) + 0.385</th></tr>
+      <tr><td>Before at P = 100</td><td class="num">0.766</td></tr>
+      <tr><td>Before at P = 135</td><td class="num">0.900</td></tr>
+      <tr><td>Before at P = 200</td><td class="num">1.148</td></tr>
+      <tr><th>After, conservative</th><th class="num">0.75 x 0.385 + 0.02 = 0.309</th></tr>
+      <tr><th>After, optimistic</th><th class="num">0.40 x 0.385 + 0.02 = 0.174</th></tr>
+      <tr><td>Reduction at P = 135</td><td class="num">66% / 81%</td></tr>
+      <tr><td>Reduction at P = 200</td><td class="num">73% / 85%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  Two caveats on this chart. First, the display share does not vanish, it relocates: the same line-of-sight
+  walks and packet builds run on the async display threads, where they no longer contribute to MSPT but do
+  contribute to CPU. On a CPU-saturated box that is a smaller win than the chart suggests. Second, the 25% and
+  60% bracket for the periodic share is a judgement, not a derivation: 25% assumes only the allocation and
+  lookup removals land, while 60% assumes the async culls (<code>hasMoved()</code>, not-ticking, unchanged
+  modified tick) eliminate most of the surviving work, which is what the code is designed to do but not
+  something that has been measured.
+</p>
+
+<h3>4.3 Chart C - Spawner cost per spawn cycle</h3>
+
+<div class="figpair">
+  <figure class="chart viz-root">
+    <p class="ctitle">Relative spawner cost per spawn cycle</p>
+    <p class="csub">Normalized units against mobs spawned per cycle. Log y.</p>
+    <div class="legend" id="leg-c"></div>
+    <div class="plot" id="plot-c"></div>
+    <figcaption>
+      <span class="est">Estimate.</span> Normalized so that the before-case at one mob per cycle equals 100.
+      Cost units, chosen to reflect relative weight rather than absolute time: entity construction 1.0 per mob,
+      one NBT save 3.0 per mob, one block probe 0.05. Before: construction, two NBT saves (throwaway storage
+      plus merge target), a nearby-stack rescan per mob at 0.5, and up to 800 random probes per cycle on a
+      saturated farm. After: construction, one NBT save (lazy base removes the throwaway one), a
+      last-matched-stack shortcut at 0.05, and 16 cached-offset re-validations. The 800-probe term is the
+      worst case, not the typical one; on a farm with free space the before-line drops toward the after-line at
+      low spawn counts.
+    </figcaption>
+  </figure>
+  <table class="arith">
+    <caption>Model: cost units per cycle at k mobs spawned</caption>
+    <thead><tr><th>Term</th><th class="num">Before</th><th class="num">After</th></tr></thead>
+    <tbody>
+      <tr><td>Entity construction</td><td class="num">1.0 k</td><td class="num">1.0 k</td></tr>
+      <tr><td>NBT saves</td><td class="num">6.0 k</td><td class="num">3.0 k</td></tr>
+      <tr><td>Nearby-stack match</td><td class="num">0.5 k</td><td class="num">0.05 k</td></tr>
+      <tr><td>Location search</td><td class="num">40.0</td><td class="num">0.8</td></tr>
+      <tr><th>Total</th><th class="num">7.5 k + 40</th><th class="num">4.05 k + 0.8</th></tr>
+      <tr><td>k = 1 (normalized)</td><td class="num">100.0</td><td class="num">10.2</td></tr>
+      <tr><td>k = 8</td><td class="num">210.5</td><td class="num">69.9</td></tr>
+      <tr><td>k = 32</td><td class="num">589.5</td><td class="num">274.5</td></tr>
+      <tr><td>k = 128</td><td class="num">2,105.3</td><td class="num">1,093.1</td></tr>
+      <tr><td>Ratio</td><td class="num" colspan="2">9.8x at k=1, 2.2x at k=32, 1.9x at k=128</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  The shape is the point: the largest win is on the idle saturated farm that spawns nothing, because the 800
+  probes are gone. As the spawn count rises the ratio settles toward the NBT-save ratio, roughly 2x, which is
+  the lazy base doing the work. Spawner ticking measured 0.86 and 0.80 ms/tick on the two tick threads, and it
+  is dominated by cycles that spawn few or no mobs, so the left end of this chart matters more than the right.
+</p>
+
+<h3>4.4 Chart D - Entity materializations per unstack cycle</h3>
+
+<div class="figpair">
+  <figure class="chart viz-root">
+    <p class="ctitle">Full NMS entity constructions per unstack cycle</p>
+    <p class="csub">Against the number of stacks with size &gt; 1.</p>
+    <div class="legend" id="leg-d"></div>
+    <div class="plot" id="plot-d"></div>
+    <figcaption>
+      <span class="est">Estimate.</span> Before: <code>shouldStayStacked</code> materializes one entity per
+      stack of size &gt; 1 per cycle, every 50 ticks. After: only 40% of stacks are considered at all (the
+      isTicking cull drops heads Paper reports as not ticking); of those, 10% are assumed non-representative and
+      materialize every cycle, and the remaining 90% materialize on one cycle in 8 because of the bounded
+      staleness check. The 10% non-representative and 40% ticking figures are guesses calibrated to a
+      spawner-farm world where most stacks are clone-like and AI-disabled; on a world of naturally spawned mobs
+      both would be higher and the gap would narrow.
+    </figcaption>
+  </figure>
+  <table class="arith">
+    <caption>Model: materializations per cycle at M stacks of size &gt; 1</caption>
+    <thead><tr><th>Term</th><th class="num">Value</th></tr></thead>
+    <tbody>
+      <tr><th>Before</th><th class="num">M</th></tr>
+      <tr><td>Considered after isTicking cull (40%)</td><td class="num">0.40 M</td></tr>
+      <tr><td>Non-representative (10% of those)</td><td class="num">0.040 M</td></tr>
+      <tr><td>Representative (90%), 1 cycle in 8</td><td class="num">0.045 M</td></tr>
+      <tr><th>After</th><th class="num">0.085 M</th></tr>
+      <tr><td>at M = 1,000</td><td class="num">1,000 -&gt; 85</td></tr>
+      <tr><td>at M = 5,000</td><td class="num">5,000 -&gt; 425</td></tr>
+      <tr><td>Reduction</td><td class="num">11.8x</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  The unstack check measured 0.14 ms/tick on the main thread. An 11.8x reduction in materializations does not
+  mean an 11.8x reduction in that number, because the surviving cheap path still costs something and the culls
+  themselves cost something on the async side, but it is the dominant term. Note the direct trade: the factor of
+  8 in this model is exactly the 20 second worst-case split latency discussed in section 3.1. Lowering
+  <code>FULL_UNSTACK_CHECK_CYCLES</code> to 4 would halve the latency and roughly double the representative
+  term, taking the after-line from 0.085M to 0.130M.
+</p>
+
+<h3>4.5 Chart E - Tick-time budget over a 200-tick window</h3>
+
+<div class="figpair">
+  <figure class="chart viz-root">
+    <p class="ctitle">Simulated RoseStacker main-thread cost per tick</p>
+    <p class="csub">200-tick window, ~12,000 stacked entities, 135 players.</p>
+    <div class="legend" id="leg-e"></div>
+    <div class="plot" id="plot-e"></div>
+    <figcaption>
+      <span class="est">Estimate.</span> A simulation, not a trace. Before: 0.30 ms of ordinary per-tick work,
+      plus a 10.8 ms stacking burst every 100 ticks (12,000 tasks at 0.9 us), an 8.1 ms unstack burst every 50
+      ticks (1,800 stacks at 4.5 us including materialization), a 2.0 ms nametag burst every 30 ticks and a
+      0.7 ms hologram burst every 20 ticks. After: the same 0.30 ms base, plus 5.10 ms of surviving unstack work
+      arriving every 50 ticks and 0.96 ms of surviving stacking work every 100 ticks, drained at no more than
+      2.00 ms per tick with the remainder carried to the next tick. The dashed line is the configured budget.
+      Absolute per-task costs are order-of-magnitude guesses; the ratio between peak and mean is the claim.
+    </figcaption>
+  </figure>
+  <table class="arith">
+    <caption>Simulation arithmetic over ticks 1-200</caption>
+    <thead><tr><th>Quantity</th><th class="num">Before</th><th class="num">After</th></tr></thead>
+    <tbody>
+      <tr><td>Base work</td><td class="num">200 x 0.30 = 60.0</td><td class="num">200 x 0.30 = 60.0</td></tr>
+      <tr><td>Stacking</td><td class="num">2 x 10.8 = 21.6</td><td class="num">2 x 0.96 = 1.9</td></tr>
+      <tr><td>Unstack</td><td class="num">4 x 8.1 = 32.4</td><td class="num">4 x 5.10 = 20.4</td></tr>
+      <tr><td>Nametags</td><td class="num">6 x 2.0 = 12.0</td><td class="num">0 (async)</td></tr>
+      <tr><td>Holograms</td><td class="num">10 x 0.7 = 7.0</td><td class="num">0 (async)</td></tr>
+      <tr><th>Total ms in window</th><th class="num">133.0</th><th class="num">82.3 *</th></tr>
+      <tr><td>Mean ms/tick</td><td class="num">0.665</td><td class="num">0.412</td></tr>
+      <tr><td><strong>Peak ms/tick</strong></td><td class="num"><strong>19.9</strong> (t = 100, 200)</td><td class="num"><strong>2.30</strong></td></tr>
+      <tr><td>Ticks above 2.0 ms</td><td class="num">9</td><td class="num">0 (peak 2.30)</td></tr>
+      <tr><td>Drain at t = 100</td><td class="num" colspan="2">queue 6.06 ms -&gt; 2.00, 2.00, 2.00, 0.06 over ticks 100-103</td></tr>
+      <tr><td colspan="3" style="font-size:11.5px;color:var(--muted)">* 78.3 ms actually drained inside the window; 4.06 ms of the tick-200 burst carries past it.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  The after-line sits at 2.30 ms rather than 2.00 during a drain because the budget governs the executor's own
+  drain loop, not the plugin's total per-tick cost; the 0.30 ms of ordinary listener and event work sits on top
+  of it. The peak falls from 19.9 ms to 2.30 ms, a factor of 8.7, while the mean falls by only 38%. That is the
+  intended trade and the reason F1 was ranked P0: MSPT is a percentile statistic, and the burst ticks are the
+  ones that set it.
+</p>
+
+<h2 id="behaviour">5. Behaviour changes to be aware of</h2>
+
+<p>
+  Everything here is a deliberate, documented change in observable behaviour. None of it is a bug, but all of it
+  is something a server operator or a downstream plugin could notice.
+</p>
+
+<ol>
+  <li>
+    <strong>Unstack split latency is bounded, not immediate.</strong> A stack whose head entity diverges from
+    its stored members in a way the age guard does not catch can stay merged for up to 8 unstack passes, which
+    at the default 50 tick frequency is 20 seconds. Master split within one pass, 2.5 seconds. The
+    <code>Ageable</code> case (a baby growing up) is checked every pass and is not subject to the bound.
+  </li>
+  <li>
+    <strong><code>SpawnerSpawnEvent#getSpawner</code> returns a less frequently refreshed snapshot.</strong> The
+    <code>CreatureSpawner</code> block state is now re-taken only when the spawner's entity type changes, not on
+    every stack size change. The snapshot was already documented as very stale, but a plugin reading
+    <code>getSpawner().getSpawnCount()</code> or similar out of the event may now see an older value than
+    before.
+  </li>
+  <li>
+    <strong>Shared damage no longer re-rolls equipment.</strong> The old path rebuilt every survivor from a
+    freshly materialized entity, which baked <code>finalizeSpawn</code>'s random equipment rolls into entries
+    that previously carried none. Editing the stored <code>Health</code> float in place stops that. Stacks that
+    take shared damage will no longer spontaneously acquire equipment, which is a fix, but it does change what
+    those stacks drop.
+  </li>
+  <li>
+    <strong>Nametag and hologram packets are sent from non-main threads</strong> when
+    <code>misc-settings.async-display-updates</code> is true (the default, Paper only, never on Folia or
+    Spigot). A plugin that intercepts outbound entity metadata packets and assumes the main thread will see them
+    on a different thread.
+  </li>
+  <li>
+    <strong>Line-of-sight wall checks read block data off the main thread</strong> under the same setting, and
+    may see a block a moment out of date. A read that throws because the server is resizing a section palette is
+    treated as air, that is, as passable, for that cycle. The setting's config comment says so.
+  </li>
+  <li>
+    <strong>WorldGuard region edits take up to 30 seconds to be honoured</strong> in the chunk-level flag cache.
+    <code>/rs reload</code> clears it immediately. Chunks that do contain a region defining the
+    <code>rosestacker</code> flag still fall through to the exact per-location query, so only the
+    "this chunk has no flagged region" answer is cached.
+  </li>
+  <li>
+    <strong>Spawner activation can be one tick stale.</strong> <code>NearbyPlayerSnapshot</code> refreshes at
+    most once per tick. The check it feeds already only runs every <code>player-check-frequency</code> ticks
+    against a radius in whole blocks.
+  </li>
+  <li>
+    <strong>Entity cache: a world that loaded since the last refresh is treated as having nothing cached</strong>
+    until the next refresh, at most three seconds later. That is the same answer the old code gave a world on
+    its first cycle. Past 4,096 simultaneously loaded worlds the excess is left uncached and a warning is logged
+    once.
+  </li>
+  <li>
+    <strong>Autosave writes are delayed, never skipped.</strong> Only the periodic autosave skips unchanged
+    stacks and spreads its writes across ticks. Chunk unload, world transfer, reload and shutdown still write
+    everything unconditionally.
+  </li>
+  <li>
+    <strong>Spawner failure reports are computed from random attempts only.</strong> Cached-offset re-checks
+    are not counted as attempts and no longer contribute to the condition tally, so the reported blame condition
+    matches master's.
+  </li>
+  <li>
+    <strong>Fallbacks and toggles.</strong> <code>misc-settings.main-thread-task-budget-ms</code> (default 2.0)
+    controls the drain budget and has no effect on Folia. <code>misc-settings.async-display-updates</code>
+    (default true) falls back to the old scheduled path when off, on Folia, on Spigot, or when the entity
+    tracking events are unavailable. Both are re-read on <code>/rs reload</code>, so either can be turned off on
+    a live server without a restart.
+  </li>
+</ol>
+
+<h2 id="validate">6. How to validate on the live server</h2>
+
+<p>
+  Deploy <span class="path">~/Downloads/RoseStacker-1.5.42-perf-2026-09-10.jar</span>, let the server settle for
+  at least 15 minutes so one autosave cycle has passed, then take a spark profile at a player count within about
+  10 of the baseline's 135. Compare these nodes. The <em>expected direction</em> column is what the change
+  should produce; anything moving the other way is a regression worth investigating before this goes wide.
+</p>
+
+<table>
+  <thead>
+    <tr><th style="width:120px">Thread</th><th>Node or counter</th><th class="num" style="width:78px">Baseline</th><th style="width:210px">Expected direction</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Main</td><td><code>CraftScheduler.mainThreadHeartbeat</code>, RoseStacker frames</td><td class="num">0.90</td><td>Large decrease. Most of the sub-tree should be the executor drain rather than per-entity tasks.</td></tr>
+    <tr><td>Main</td><td><code>BatchedMainThreadExecutor.drain</code> (new node)</td><td class="num">n/a</td><td>Appears, and should sit near or below 2.0 ms in its worst samples. If it is pinned at 2.0 every tick the queue is saturated: raise the budget or investigate what is submitting.</td></tr>
+    <tr><td>Main</td><td><code>EntityUtils.isLookingAtEntity</code> / line-of-sight walks</td><td class="num">0.51 + 0.16</td><td>Near zero on the main thread with async display on. Should reappear on the RoseStacker async pass threads, not vanish from the profile entirely.</td></tr>
+    <tr><td>Main</td><td><code>StackingThread.processUnstacking</code> / <code>shouldStayStacked</code></td><td class="num">0.14</td><td>Decrease by roughly an order of magnitude. <code>createCreature</code> frames underneath it should mostly disappear.</td></tr>
+    <tr><td>Main</td><td><code>EntityCacheManager.refresh</code></td><td class="num">0.17</td><td>Decrease. The clear-and-rehash frames should be gone; what remains is the off-to-the-side build.</td></tr>
+    <tr><td>Overworld tick</td><td>Stacked spawner ticking</td><td class="num">0.86</td><td>Decrease. <code>saveWithoutId</code> and <code>TagValueOutput</code> frames should drop sharply; the random-position search should shrink to the cached-offset re-check.</td></tr>
+    <tr><td>End tick</td><td>Stacked spawner ticking</td><td class="num">0.80</td><td>Same, and proportionally larger, since End farms are the most saturated.</td></tr>
+    <tr><td>Any</td><td><code>SecureRandom.nextBytes</code> / <code>UUID.randomUUID</code></td><td class="num">visible</td><td>Should disappear from RoseStacker call paths on 1.21+. If it is still there, check which NMS module loaded.</td></tr>
+    <tr><td>Any</td><td><code>NamespacedKey.&lt;init&gt;</code> under <code>PersistentDataUtils</code></td><td class="num">visible</td><td>Should disappear.</td></tr>
+    <tr><td>Any</td><td><code>LinkedBlockingQueue</code> frames under the NBT storage</td><td class="num">visible</td><td>Should disappear.</td></tr>
+    <tr><td>Main</td><td>Worst-tick MSPT (spark <code>/spark tps</code>, 95th and 99th percentile)</td><td class="num">-</td><td>The percentile tail should tighten more than the mean moves. That is the specific claim of chart E.</td></tr>
+    <tr><td>Main</td><td>Autosave tick (every 15 min, <code>DataUtils</code> frames)</td><td class="num">-</td><td>The single-tick stall should flatten into a few ticks of drain. Watch for it around the autosave interval.</td></tr>
+  </tbody>
+</table>
+
+<h4>Correctness checks to run alongside</h4>
+<ul>
+  <li>Breed a stack of babies on a farm and confirm they split off within a pass or two as they grow. That is the age guard from <code>65dd7b51</code>.</li>
+  <li>Stand a large stack in lava with <code>share-damage-conditions</code> configured and confirm the stack loses members and the survivors keep their health across a restart. That exercises <code>damageAll</code> plus <code>markStorageModified</code>.</li>
+  <li>Toggle <code>async-display-updates</code> off and on with <code>/rs reload</code> and confirm nametags and holograms keep updating in both states, and that a player holding the stacking tool across the reload still sees particles.</li>
+  <li>Confirm spawner failure messages still name the same condition they did on master for a farm that is deliberately blocked.</li>
+  <li>Load and unload a world a few times and confirm nearby-entity lookups in both worlds stay correct (the world index rebuild from <code>ad159694</code>).</li>
+</ul>
+
+<h2 id="appendix-a">Appendix A - Commits</h2>
+
+<p>In branch order, oldest first. 35 commits, including three merges of the topic branches.</p>
+
+<table>
+  <thead><tr><th style="width:92px">Hash</th><th>Subject</th></tr></thead>
+  <tbody>
+    <tr><td><code>697f73cd</code></td><td>Add StackedEntityDataStorage#isHeadRepresentative hook for cheap unstack checks</td></tr>
+    <tr><td><code>c41c8181</code></td><td>Skip WorldGuard region queries in chunks with no flagged region</td></tr>
+    <tr><td><code>87c02ec1</code></td><td>Merge branch &#x27;perf/impl-wg&#x27; into perf/proposal-impl-2026-09-10</td></tr>
+    <tr><td><code>f3ab00ae</code></td><td>Defer the NBT stack base tag until a stack actually grows</td></tr>
+    <tr><td><code>2d2cd50c</code></td><td>Publish the entity cache by reference swap and key its cells by a packed long</td></tr>
+    <tr><td><code>ac469788</code></td><td>Answer unstack checks from the head entity for clone-like NBT stacks</td></tr>
+    <tr><td><code>b88405b6</code></td><td>Count nearby entities with an early exit for the max-nearby-entities condition</td></tr>
+    <tr><td><code>15d19ab3</code></td><td>Cache PDC flags and display strings instead of rebuilding them per check</td></tr>
+    <tr><td><code>e8f1fb9a</code></td><td>Cache the hologram Location per stacked spawner</td></tr>
+    <tr><td><code>2b3d88a2</code></td><td>Drop the dead capital-A attribute UUID plumbing from the 1.21+ modules</td></tr>
+    <tr><td><code>c8250deb</code></td><td>Precompute per-entity-type bounds for the intersecting-block walk</td></tr>
+    <tr><td><code>8bc9a623</code></td><td>Stop deep copying and re-randomizing the entity tag on every materialization</td></tr>
+    <tr><td><code>6f3b5882</code></td><td>Back the NBT stack storage with an ArrayDeque under its own lock</td></tr>
+    <tr><td><code>4da6697d</code></td><td>Apply shared damage to the stored health tags instead of rebuilding the stack</td></tr>
+    <tr><td><code>a75430fb</code></td><td>Collapse the spawner attempt loop with a per-spawner cache of valid offsets</td></tr>
+    <tr><td><code>58d27ac7</code></td><td>Reuse nametag accessors, hologram packets and hologram line UUIDs</td></tr>
+    <tr><td><code>e0a28758</code></td><td>Report entity save problems after the save has actually run</td></tr>
+    <tr><td><code>8927f67f</code></td><td>Check spawner player activation against a shared per-world snapshot</td></tr>
+    <tr><td><code>e4684a66</code></td><td>Merge branch &#x27;perf/impl-nms&#x27; into perf/proposal-impl-2026-09-10</td></tr>
+    <tr><td><code>e3343f7f</code></td><td>Merge branch &#x27;perf/impl-spawner&#x27; into perf/proposal-impl-2026-09-10</td></tr>
+    <tr><td><code>bcfc1eb3</code></td><td>Batch the periodic passes onto one budgeted main-thread task</td></tr>
+    <tr><td><code>0e8a6db2</code></td><td>Skip unchanged stacks on autosave and spread the writes across ticks</td></tr>
+    <tr><td><code>fd39bcfd</code></td><td>Fix up the async display path after review</td></tr>
+    <tr><td><code>31c448cf</code></td><td>Don&#x27;t cache spawn-reason flags before the entity is in the world</td></tr>
+    <tr><td><code>36a77566</code></td><td>Merge branch &#x27;perf/impl-core&#x27; into perf/proposal-impl-2026-09-10</td></tr>
+    <tr><td><code>11d6d5c9</code></td><td>Report NBT load problems after the load instead of before it</td></tr>
+    <tr><td><code>205df2a0</code></td><td>Add the 2026-09-10 performance proposal this branch implements</td></tr>
+    <tr><td><code>65dd7b51</code></td><td>Bound how long an unstack check may be answered from the head entity</td></tr>
+    <tr><td><code>decf055a</code></td><td>Copy stored tags on shared damage and tell the stack it changed</td></tr>
+    <tr><td><code>ad159694</code></td><td>Rebuild the entity cache world indices with the cache itself</td></tr>
+    <tr><td><code>eb3ec1ac</code></td><td>Never let one unreadable block abort an off-thread wall check</td></tr>
+    <tr><td><code>01244f15</code></td><td>Publish hologram lines and watcher state safely across threads</td></tr>
+    <tr><td><code>bdb5beb9</code></td><td>Restore the stacking tool holders and prune player snapshots on reload</td></tr>
+    <tr><td><code>2d5473ea</code></td><td>Keep cached spawn offsets out of the spawner failure report</td></tr>
+    <tr><td><code>fc9a84d1</code></td><td>Keep one failing stack from taking a whole batch with it</td></tr>
+  </tbody></table>
+
+<h2 id="appendix-b">Appendix B - New and changed APIs</h2>
+
+<table>
+  <thead><tr><th style="width:290px">Member</th><th style="width:270px">Declared in</th><th>Contract</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>boolean isHeadRepresentative()</code></td>
+      <td><code>StackedEntityDataStorage</code></td>
+      <td>True when the front stored entry differs from the frozen base only in <code>UNSAFE_NBT_KEYS</code>, so the head entity is a valid stand-in for it in an unstack comparison. Defaults to false; the simple storages return true unconditionally; the NBT storages test the front entry under the data lock.</td>
+    </tr>
+    <tr>
+      <td><code>Boolean getBaseAdultState()</code></td>
+      <td><code>StackedEntityDataStorage</code></td>
+      <td>The adult state the stored entries were captured against, or null when unknown or not applicable. Used to catch the one divergence that happens with nothing touching the stack: a baby growing up. The NBT implementations read it out of the lazily captured base tag.</td>
+    </tr>
+    <tr>
+      <td><code>List&lt;LivingEntity&gt; damageAll(double)</code></td>
+      <td><code>StackedEntityDataStorage</code></td>
+      <td>Subtracts the damage from every member and returns only the members that died, materialized, for the loot code. NBT implementations copy each survivor's tag with the new <code>Health</code> and refill the deque from the copies rather than mutating published tags. The default implementation keeps the old entity-based path.</td>
+    </tr>
+    <tr>
+      <td><code>int countNearbyEntities(World, double x, double y, double z, double radius, Predicate&lt;Entity&gt;, int limit)</code><br><code>int countNearbyEntities(..., ToIntFunction&lt;Entity&gt; weigher, int limit)</code></td>
+      <td><code>EntityCacheManager</code></td>
+      <td>Counting walk over the same cells as <code>getNearbyEntities</code> with no collection allocated, stopping as soon as <code>limit</code> is reached. The weigher overload lets the include-stacks path sum stack sizes while keeping the early exit.</td>
+    </tr>
+    <tr>
+      <td><code>BatchedMainThreadExecutor</code><br><code>getInstance()</code>, <code>start()</code>, <code>stop()</code>, <code>submit(Runnable)</code>, <code>submit(Entity, Runnable)</code>, <code>submit(Location, Runnable)</code>, <code>isPerRegion()</code>, <code>getQueueDepth()</code></td>
+      <td><code>dev.rosewood.rosestacker.utils</code></td>
+      <td>One repeating main-thread task draining a queue under <code>misc-settings.main-thread-task-budget-ms</code>, carrying overflow to the next tick, forcing any job older than 40 ticks, and isolating exceptions per job. On Folia <code>isPerRegion()</code> is true and jobs route to the region owning their entity or location. <code>getQueueDepth()</code> is for diagnostics.</td>
+    </tr>
+    <tr>
+      <td><code>void setUpdatesSuppressed(boolean)</code></td>
+      <td><code>StackedSpawnerTile</code></td>
+      <td>Suppresses the per-setter block update broadcast for the duration of a property batch; a single update is sent when suppression is lifted. Default method, so NMS modules that do not implement it are unaffected.</td>
+    </tr>
+    <tr>
+      <td><code>void markStorageModified()</code></td>
+      <td><code>StackedEntity</code></td>
+      <td>Marks the stack dirty for the autosave when an edit went straight to the storage and changed neither the size nor the modified tick. Called by <code>EntityListener</code> after <code>damageAll</code>.</td>
+    </tr>
+    <tr>
+      <td><code>NearbyPlayerSnapshot</code><br><code>hasNearbyPlayer(World, double, double, double, double)</code>, <code>forget(World)</code>, <code>clear()</code></td>
+      <td><code>dev.rosewood.rosestacker.spawning</code></td>
+      <td>One per-world snapshot of the positions of players that could activate a spawner, refreshed at most once per tick and only on demand, filtering spectators and dead players the same way the level's own check does. Version independent. <code>forget</code> is called from the world unload handler and <code>clear</code> from <code>StackerUtils.clearCache</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>New configuration</h4>
+<table>
+  <thead><tr><th style="width:330px">Key</th><th class="num" style="width:72px">Default</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>misc-settings.main-thread-task-budget-ms</code></td><td class="num">2.0</td><td>Milliseconds per tick the periodic passes may spend on the main thread. Overflow carries to the next tick. No effect on Folia.</td></tr>
+    <tr><td><code>misc-settings.async-display-updates</code></td><td class="num">true</td><td>Send nametag and hologram updates from the async threads. Paper only; falls back to the scheduled path otherwise. While enabled, wall checks read block data off the main thread.</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  RoseStacker performance implementation report, 2026-09-11. Baseline profile: spark, 2026-09-05, UniverseSpigot
+  1.21.11, 135 players, ~16 TPS, ~12k living entities. Branch <code>perf/proposal-impl-2026-09-10</code>, PR
+  <a href="https://github.com/ericlmao/RoseStacker/pull/14">#14</a>. Charts in section 4 are models, not
+  measurements. This document renders offline; no external assets are referenced.
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var root = document.documentElement;
+  var toggle = document.getElementById("themetoggle");
+  function currentDark() {
+    if (root.dataset.theme) return root.dataset.theme === "dark";
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function syncToggleLabel() { toggle.textContent = currentDark() ? "Toggle light" : "Toggle dark"; }
+  toggle.addEventListener("click", function () {
+    root.dataset.theme = currentDark() ? "light" : "dark";
+    syncToggleLabel();
+  });
+  syncToggleLabel();
+
+  var NS = "http://www.w3.org/2000/svg";
+  function mk(name, attrs) {
+    var e = document.createElementNS(NS, name);
+    if (attrs) for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function group(n) { return n.toLocaleString("en-US"); }
+  function fixed(n, d) { return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); }
+
+  var W = 780, H = 340, M = { l: 62, r: 156, t: 16, b: 46 };
+  var PW = W - M.l - M.r, PH = H - M.t - M.b;
+
+  function makeScales(cfg) {
+    var x0 = cfg.xDomain[0], x1 = cfg.xDomain[1];
+    var sx = function (v) { return M.l + PW * (v - x0) / (x1 - x0); };
+    var sy;
+    if (cfg.yLog) {
+      var lo = Math.log(cfg.yDomain[0]) / Math.LN10, hi = Math.log(cfg.yDomain[1]) / Math.LN10;
+      sy = function (v) {
+        var lv = Math.log(Math.max(v, cfg.yDomain[0])) / Math.LN10;
+        return M.t + PH * (1 - (lv - lo) / (hi - lo));
+      };
+    } else {
+      var a = cfg.yDomain[0], b = cfg.yDomain[1];
+      sy = function (v) { return M.t + PH * (1 - (v - a) / (b - a)); };
+    }
+    return { sx: sx, sy: sy };
+  }
+
+  function render(cfg) {
+    var host = document.getElementById("plot-" + cfg.id);
+    var legHost = document.getElementById("leg-" + cfg.id);
+    if (!host) return;
+
+    cfg.series.forEach(function (s) {
+      var k = document.createElement("span");
+      k.className = "k";
+      var sw = document.createElement("i");
+      sw.style.background = "var(--series-" + s.slot + ")";
+      k.appendChild(sw);
+      k.appendChild(document.createTextNode(s.name));
+      legHost.appendChild(k);
+    });
+
+    var sc = makeScales(cfg);
+    var svg = mk("svg", {
+      viewBox: "0 0 " + W + " " + H,
+      role: "img",
+      "aria-label": cfg.aria
+    });
+
+    // gridlines + y ticks
+    cfg.yTicks.forEach(function (t) {
+      var y = sc.sy(t.v);
+      var g = mk("line", { x1: M.l, x2: M.l + PW, y1: y, y2: y, "stroke-width": 1 });
+      g.style.stroke = "var(--grid)";
+      svg.appendChild(g);
+      var lb = mk("text", { x: M.l - 10, y: y + 4, "text-anchor": "end", "font-size": 11 });
+      lb.style.fill = "var(--text-muted)";
+      lb.style.fontVariantNumeric = "tabular-nums";
+      lb.textContent = t.l;
+      svg.appendChild(lb);
+    });
+
+    // baseline + x ticks
+    var base = mk("line", { x1: M.l, x2: M.l + PW, y1: M.t + PH, y2: M.t + PH, "stroke-width": 1 });
+    base.style.stroke = "var(--axis)";
+    svg.appendChild(base);
+    cfg.xTicks.forEach(function (t) {
+      var x = sc.sx(t.v);
+      var tk = mk("line", { x1: x, x2: x, y1: M.t + PH, y2: M.t + PH + 5, "stroke-width": 1 });
+      tk.style.stroke = "var(--axis)";
+      svg.appendChild(tk);
+      var lb = mk("text", { x: x, y: M.t + PH + 19, "text-anchor": "middle", "font-size": 11 });
+      lb.style.fill = "var(--text-muted)";
+      lb.style.fontVariantNumeric = "tabular-nums";
+      lb.textContent = t.l;
+      svg.appendChild(lb);
+    });
+
+    // axis titles
+    var xt = mk("text", { x: M.l + PW / 2, y: H - 8, "text-anchor": "middle", "font-size": 11.5 });
+    xt.style.fill = "var(--text-secondary)";
+    xt.textContent = cfg.xLabel;
+    svg.appendChild(xt);
+    var yt = mk("text", { x: 14, y: M.t + PH / 2, "text-anchor": "middle", "font-size": 11.5,
+      transform: "rotate(-90 14 " + (M.t + PH / 2) + ")" });
+    yt.style.fill = "var(--text-secondary)";
+    yt.textContent = cfg.yLabel;
+    svg.appendChild(yt);
+
+    // annotation line
+    if (cfg.annot) {
+      var ay = sc.sy(cfg.annot.v);
+      var al = mk("line", { x1: M.l, x2: M.l + PW, y1: ay, y2: ay, "stroke-width": 1.5, "stroke-dasharray": "5 4" });
+      al.style.stroke = "var(--annot)";
+      svg.appendChild(al);
+      var at = mk("text", { x: M.l + PW - 4, y: ay - 6, "text-anchor": "end", "font-size": 11 });
+      at.style.fill = "var(--text-secondary)";
+      at.textContent = cfg.annot.l;
+      svg.appendChild(at);
+    }
+
+    // series paths
+    var labels = [];
+    cfg.series.forEach(function (s) {
+      var d = "";
+      for (var i = 0; i < cfg.xs.length; i++) {
+        d += (i ? "L" : "M") + sc.sx(cfg.xs[i]).toFixed(2) + " " + sc.sy(s.ys[i]).toFixed(2) + " ";
+      }
+      var p = mk("path", { d: d, fill: "none", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" });
+      p.style.stroke = "var(--series-" + s.slot + ")";
+      svg.appendChild(p);
+      labels.push({
+        x: sc.sx(cfg.xs[cfg.xs.length - 1]),
+        y: sc.sy(s.ys[s.ys.length - 1]),
+        slot: s.slot,
+        text: s.label
+      });
+    });
+
+    // direct labels, pushed apart so they never collide
+    labels.sort(function (a, b) { return a.y - b.y; });
+    for (var i = 1; i < labels.length; i++) {
+      if (labels[i].y - labels[i - 1].y < 15) labels[i].y = labels[i - 1].y + 15;
+    }
+    labels.forEach(function (l) {
+      var r = mk("rect", { x: l.x + 8, y: l.y - 1.5, width: 13, height: 3, rx: 1.5 });
+      r.style.fill = "var(--series-" + l.slot + ")";
+      svg.appendChild(r);
+      var t = mk("text", { x: l.x + 26, y: l.y + 4, "font-size": 11.5 });
+      t.style.fill = "var(--text-secondary)";
+      t.textContent = l.text;
+      svg.appendChild(t);
+    });
+
+    // hover layer
+    var cross = mk("line", { x1: 0, x2: 0, y1: M.t, y2: M.t + PH, "stroke-width": 1, opacity: 0 });
+    cross.style.stroke = "var(--axis)";
+    svg.appendChild(cross);
+    var dots = cfg.series.map(function (s) {
+      var c = mk("circle", { r: 4.5, opacity: 0, "stroke-width": 2 });
+      c.style.fill = "var(--series-" + s.slot + ")";
+      c.style.stroke = "var(--surface-1)";
+      svg.appendChild(c);
+      return c;
+    });
+    var hit = mk("rect", { x: M.l, y: M.t, width: PW, height: PH, fill: "transparent" });
+    svg.appendChild(hit);
+
+    var tip = document.createElement("div");
+    tip.className = "tip";
+    host.appendChild(tip);
+    host.appendChild(svg);
+
+    function hide() {
+      cross.setAttribute("opacity", 0);
+      dots.forEach(function (d) { d.setAttribute("opacity", 0); });
+      tip.style.opacity = 0;
+    }
+    function move(ev) {
+      var box = svg.getBoundingClientRect();
+      var vx = (ev.clientX - box.left) * (W / box.width);
+      var best = 0, bd = Infinity;
+      for (var i = 0; i < cfg.xs.length; i++) {
+        var dd = Math.abs(sc.sx(cfg.xs[i]) - vx);
+        if (dd < bd) { bd = dd; best = i; }
+      }
+      var px = sc.sx(cfg.xs[best]);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", 1);
+      var html = '<div class="th">' + cfg.tipX(cfg.xs[best]) + "</div>";
+      cfg.series.forEach(function (s, i) {
+        dots[i].setAttribute("cx", px);
+        dots[i].setAttribute("cy", sc.sy(s.ys[best]));
+        dots[i].setAttribute("opacity", 1);
+        html += '<div class="r"><i style="background:var(--series-' + s.slot + ')"></i>' +
+          s.name + ": " + cfg.tipY(s.ys[best]) + "</div>";
+      });
+      tip.innerHTML = html;
+      tip.style.opacity = 1;
+      var hb = host.getBoundingClientRect();
+      var left = (px / W) * hb.width + 14;
+      if (left + tip.offsetWidth > hb.width) left = (px / W) * hb.width - tip.offsetWidth - 14;
+      tip.style.left = Math.max(0, left) + "px";
+      tip.style.top = ((M.t + 6) / H) * hb.height + "px";
+    }
+    svg.addEventListener("mousemove", move);
+    svg.addEventListener("mouseleave", hide);
+  }
+
+  function seq(a, b, step) { var r = []; for (var v = a; v <= b + 1e-9; v += step) r.push(Math.round(v * 1e6) / 1e6); return r; }
+
+  // ---- Chart A: scheduled tasks per 100-tick window ----
+  var xsA = seq(0, 20000, 250);
+  render({
+    id: "a",
+    xs: xsA,
+    xDomain: [0, 20000], yDomain: [100, 100000], yLog: true,
+    xLabel: "Stacked entities in the world",
+    yLabel: "Main-thread tasks per 100 ticks (log)",
+    aria: "Line chart. Before rises from about 1,100 to about 29,000 tasks per 100-tick window as stacked entities go from 0 to 20,000. After is flat at 100.",
+    xTicks: [0, 5000, 10000, 15000, 20000].map(function (v) { return { v: v, l: group(v) }; }),
+    yTicks: [{ v: 100, l: "100" }, { v: 1000, l: "1k" }, { v: 10000, l: "10k" }, { v: 100000, l: "100k" }],
+    tipX: function (v) { return group(v) + " stacked entities"; },
+    tipY: function (v) { return group(Math.round(v)) + " tasks"; },
+    series: [
+      { name: "Before (one task per entity)", slot: 1, label: "Before", ys: xsA.map(function (n) { return 1.4 * n + 1125; }) },
+      { name: "After (one drain task per tick)", slot: 2, label: "After", ys: xsA.map(function () { return 100; }) }
+    ]
+  });
+
+  // ---- Chart B: ms/tick vs players ----
+  var xsB = seq(0, 200, 2);
+  render({
+    id: "b",
+    xs: xsB,
+    xDomain: [0, 200], yDomain: [0, 1.2],
+    xLabel: "Concurrent players",
+    yLabel: "RoseStacker main-thread ms/tick",
+    aria: "Line chart. Before rises from 0.385 to 1.148 ms per tick across 0 to 200 players. The conservative after line is flat at 0.309 and the optimistic after line is flat at 0.174.",
+    xTicks: [0, 50, 100, 150, 200].map(function (v) { return { v: v, l: String(v) }; }),
+    yTicks: [0, 0.3, 0.6, 0.9, 1.2].map(function (v) { return { v: v, l: fixed(v, 1) }; }),
+    tipX: function (v) { return v + " players"; },
+    tipY: function (v) { return fixed(v, 3) + " ms/tick"; },
+    series: [
+      { name: "Before", slot: 1, label: "Before", ys: xsB.map(function (p) { return 0.515 * (p / 135) + 0.385; }) },
+      { name: "After, conservative (25%)", slot: 2, label: "After, cons.", ys: xsB.map(function () { return 0.309; }) },
+      { name: "After, optimistic (60%)", slot: 3, label: "After, opt.", ys: xsB.map(function () { return 0.174; }) }
+    ]
+  });
+
+  // ---- Chart C: spawner cost per cycle ----
+  var xsC = seq(1, 128, 1);
+  var K = 100 / 47.5;
+  render({
+    id: "c",
+    xs: xsC,
+    xDomain: [1, 128], yDomain: [5, 3000], yLog: true,
+    xLabel: "Mobs spawned per spawn cycle",
+    yLabel: "Relative cost per cycle (log, before at k=1 is 100)",
+    aria: "Line chart. Before starts at 100 units at one mob per cycle and rises to about 2,105 at 128. After starts at about 10 and rises to about 1,093.",
+    xTicks: [1, 32, 64, 96, 128].map(function (v) { return { v: v, l: String(v) }; }),
+    yTicks: [{ v: 10, l: "10" }, { v: 100, l: "100" }, { v: 1000, l: "1,000" }],
+    tipX: function (v) { return v + " mobs/cycle"; },
+    tipY: function (v) { return fixed(v, 1) + " units"; },
+    series: [
+      { name: "Before", slot: 1, label: "Before", ys: xsC.map(function (k) { return (7.5 * k + 40) * K; }) },
+      { name: "After", slot: 2, label: "After", ys: xsC.map(function (k) { return (4.05 * k + 0.8) * K; }) }
+    ]
+  });
+
+  // ---- Chart D: materializations per unstack cycle ----
+  var xsD = seq(0, 5000, 50);
+  render({
+    id: "d",
+    xs: xsD,
+    xDomain: [0, 5000], yDomain: [0, 5000],
+    xLabel: "Stacks with size > 1",
+    yLabel: "NMS entity constructions per unstack cycle",
+    aria: "Line chart. Before rises one to one to 5,000 constructions. After rises to 425.",
+    xTicks: [0, 1250, 2500, 3750, 5000].map(function (v) { return { v: v, l: group(v) }; }),
+    yTicks: [0, 1250, 2500, 3750, 5000].map(function (v) { return { v: v, l: group(v) }; }),
+    tipX: function (v) { return group(v) + " stacks"; },
+    tipY: function (v) { return group(Math.round(v)) + " constructions"; },
+    series: [
+      { name: "Before", slot: 1, label: "Before", ys: xsD.map(function (m) { return m; }) },
+      { name: "After", slot: 2, label: "After", ys: xsD.map(function (m) { return 0.085 * m; }) }
+    ]
+  });
+
+  // ---- Chart E: simulated 200-tick window ----
+  var xsE = seq(1, 200, 1);
+  var beforeE = xsE.map(function (t) {
+    var v = 0.30;
+    if (t % 100 === 0) v += 10.8;
+    if (t % 50 === 0) v += 8.1;
+    if (t % 30 === 0) v += 2.0;
+    if (t % 20 === 0) v += 0.7;
+    return v;
+  });
+  var afterE = [], q = 0;
+  xsE.forEach(function (t) {
+    if (t % 50 === 0) q += 5.10;
+    if (t % 100 === 0) q += 0.96;
+    var drained = Math.min(2.00, q);
+    q -= drained;
+    afterE.push(0.30 + drained);
+  });
+  render({
+    id: "e",
+    xs: xsE,
+    xDomain: [1, 200], yDomain: [0, 21],
+    xLabel: "Tick within the simulated window",
+    yLabel: "RoseStacker main-thread ms in that tick",
+    aria: "Line chart over 200 ticks. Before spikes to 19.9 ms on ticks 100 and 200 and to 8 to 10 ms every 50 ticks. After never exceeds 2.30 ms.",
+    xTicks: [1, 50, 100, 150, 200].map(function (v) { return { v: v, l: String(v) }; }),
+    yTicks: [0, 5, 10, 15, 20].map(function (v) { return { v: v, l: String(v) }; }),
+    annot: { v: 2.0, l: "executor budget 2.0 ms" },
+    tipX: function (v) { return "tick " + v; },
+    tipY: function (v) { return fixed(v, 2) + " ms"; },
+    series: [
+      { name: "Before", slot: 1, label: "Before", ys: beforeE },
+      { name: "After (budgeted drain)", slot: 2, label: "After", ys: afterE }
+    ]
+  });
+})();
+</script>
+
+</body>
+</html>

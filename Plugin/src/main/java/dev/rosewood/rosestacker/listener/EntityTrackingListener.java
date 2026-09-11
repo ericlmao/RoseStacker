@@ -136,6 +136,8 @@ public class EntityTrackingListener implements Listener {
     }
 
     private void updateTracking(Entity entity, UUID playerId, boolean tracking) {
+        StackedEntity.markTrackEventsObserved();
+
         StackManager stackManager = this.rosePlugin.getManager(StackManager.class);
         if (entity instanceof LivingEntity livingEntity) {
             StackedEntity stackedEntity = stackManager.getStackedEntity(livingEntity);
