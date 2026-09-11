@@ -1,18 +1,21 @@
 package dev.rosewood.rosestacker.utils;
 
-import dev.rosewood.rosegarden.RosePlugin;
 import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.config.SettingKey;
+import dev.rosewood.rosestacker.manager.StackManager;
 import dev.rosewood.rosestacker.manager.StackSettingManager;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
 import dev.rosewood.rosestacker.nms.NMSHandler;
 import dev.rosewood.rosestacker.nms.spawner.StackedSpawnerTile;
+import dev.rosewood.rosestacker.stack.StackedEntity;
+import dev.rosewood.rosestacker.stack.StackedItem;
 import dev.rosewood.rosestacker.stack.settings.EntityStackSettings;
 import java.util.ConcurrentModificationException;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Hoglin;
+import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.PiglinAbstract;
@@ -28,8 +31,51 @@ public final class PersistentDataUtils {
     private static final String SPAWNED_FROM_DISPENSER_METADATA_NAME = "dispenser_spawned";
     private static final String TOTAL_SPAWNS_METADATA_NAME = "total_spawns";
 
-    // Built on first use rather than in a static initializer so the plugin instance is guaranteed to exist
+    // Built on first use rather than in a static initializer so the plugin instance is guaranteed to exist.
+    // These used to be allocated per call; the NamespacedKey constructor lowercases and validates both
+    // halves and PersistentDataContainer#has then builds the "namespace:key" string again, which added up
+    // to millions of throwaway strings a minute across the stacking passes and the entity event handlers.
+    private static NamespacedKey unstackableKey;
+    private static NamespacedKey noAiKey;
+    private static NamespacedKey spawnedFromSpawnerKey;
+    private static NamespacedKey spawnedFromTrialSpawnerKey;
+    private static NamespacedKey spawnedFromDispenserKey;
     private static NamespacedKey totalSpawnsKey;
+
+    private static NamespacedKey getUnstackableKey() {
+        NamespacedKey key = unstackableKey;
+        if (key == null)
+            unstackableKey = key = new NamespacedKey(RoseStacker.getInstance(), UNSTACKABLE_METADATA_NAME);
+        return key;
+    }
+
+    private static NamespacedKey getNoAiKey() {
+        NamespacedKey key = noAiKey;
+        if (key == null)
+            noAiKey = key = new NamespacedKey(RoseStacker.getInstance(), NO_AI_METADATA_NAME);
+        return key;
+    }
+
+    private static NamespacedKey getSpawnedFromSpawnerKey() {
+        NamespacedKey key = spawnedFromSpawnerKey;
+        if (key == null)
+            spawnedFromSpawnerKey = key = new NamespacedKey(RoseStacker.getInstance(), SPAWNED_FROM_SPAWNER_METADATA_NAME);
+        return key;
+    }
+
+    private static NamespacedKey getSpawnedFromTrialSpawnerKey() {
+        NamespacedKey key = spawnedFromTrialSpawnerKey;
+        if (key == null)
+            spawnedFromTrialSpawnerKey = key = new NamespacedKey(RoseStacker.getInstance(), SPAWNED_FROM_TRIAL_SPAWNER_METADATA_NAME);
+        return key;
+    }
+
+    private static NamespacedKey getSpawnedFromDispenserKey() {
+        NamespacedKey key = spawnedFromDispenserKey;
+        if (key == null)
+            spawnedFromDispenserKey = key = new NamespacedKey(RoseStacker.getInstance(), SPAWNED_FROM_DISPENSER_METADATA_NAME);
+        return key;
+    }
 
     private static NamespacedKey getTotalSpawnsKey() {
         NamespacedKey key = totalSpawnsKey;
@@ -38,35 +84,54 @@ public final class PersistentDataUtils {
         return key;
     }
 
-    public static void setUnstackable(Entity entity, boolean unstackable) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        if (unstackable) {
-            entity.getPersistentDataContainer().set(new NamespacedKey(rosePlugin, UNSTACKABLE_METADATA_NAME), PersistentDataType.INTEGER, 1);
-        } else {
-            entity.getPersistentDataContainer().remove(new NamespacedKey(rosePlugin, UNSTACKABLE_METADATA_NAME));
+    /**
+     * Drops the flags a stack caches for an entity, so the next read goes back to the container.
+     * Every writer below calls this; without it a cached value could outlive the write that changed it.
+     *
+     * @param entity The entity whose stack should forget its cached flags
+     */
+    private static void invalidateCachedFlags(Entity entity) {
+        StackManager stackManager = RoseStacker.getInstance().getManager(StackManager.class);
+        if (entity instanceof LivingEntity livingEntity) {
+            StackedEntity stackedEntity = stackManager.getStackedEntity(livingEntity);
+            if (stackedEntity != null)
+                stackedEntity.invalidateCachedFlags();
+        } else if (entity instanceof Item item) {
+            StackedItem stackedItem = stackManager.getStackedItem(item);
+            if (stackedItem != null)
+                stackedItem.invalidateCachedFlags();
         }
     }
 
+    public static void setUnstackable(Entity entity, boolean unstackable) {
+        if (unstackable) {
+            entity.getPersistentDataContainer().set(getUnstackableKey(), PersistentDataType.INTEGER, 1);
+        } else {
+            entity.getPersistentDataContainer().remove(getUnstackableKey());
+        }
+
+        invalidateCachedFlags(entity);
+    }
+
     public static boolean isUnstackable(Entity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        return entity.getPersistentDataContainer().has(new NamespacedKey(rosePlugin, UNSTACKABLE_METADATA_NAME), PersistentDataType.INTEGER);
+        return entity.getPersistentDataContainer().has(getUnstackableKey(), PersistentDataType.INTEGER);
     }
 
     public static void removeEntityAi(LivingEntity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
         PersistentDataContainer dataContainer = entity.getPersistentDataContainer();
-        NamespacedKey key = new NamespacedKey(rosePlugin, NO_AI_METADATA_NAME);
-        if (!dataContainer.has(key, PersistentDataType.INTEGER))
+        NamespacedKey key = getNoAiKey();
+        if (!dataContainer.has(key, PersistentDataType.INTEGER)) {
             dataContainer.set(key, PersistentDataType.INTEGER, 1);
+            invalidateCachedFlags(entity);
+        }
 
         applyDisabledAi(entity);
     }
 
     public static void reenableEntityAi(LivingEntity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
         PersistentDataContainer dataContainer = entity.getPersistentDataContainer();
-        NamespacedKey key = new NamespacedKey(rosePlugin, NO_AI_METADATA_NAME);
-        dataContainer.remove(key);
+        dataContainer.remove(getNoAiKey());
+        invalidateCachedFlags(entity);
 
         applyDisabledAi(entity, false);
     }
@@ -115,13 +180,12 @@ public final class PersistentDataUtils {
         if (entityStackSettings != null && entityStackSettings.isMobAIDisabled())
             return true;
 
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        return entity.getPersistentDataContainer().has(new NamespacedKey(rosePlugin, NO_AI_METADATA_NAME), PersistentDataType.INTEGER);
+        return entity.getPersistentDataContainer().has(getNoAiKey(), PersistentDataType.INTEGER);
     }
 
     public static void tagSpawnedFromSpawner(Entity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        entity.getPersistentDataContainer().set(new NamespacedKey(rosePlugin, SPAWNED_FROM_SPAWNER_METADATA_NAME), PersistentDataType.INTEGER, 1);
+        entity.getPersistentDataContainer().set(getSpawnedFromSpawnerKey(), PersistentDataType.INTEGER, 1);
+        invalidateCachedFlags(entity);
     }
 
     /**
@@ -131,14 +195,13 @@ public final class PersistentDataUtils {
      * @return true if the entity was spawned from a spawner, otherwise false
      */
     public static boolean isSpawnedFromSpawner(Entity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        return entity.getPersistentDataContainer().has(new NamespacedKey(rosePlugin, SPAWNED_FROM_SPAWNER_METADATA_NAME), PersistentDataType.INTEGER)
+        return entity.getPersistentDataContainer().has(getSpawnedFromSpawnerKey(), PersistentDataType.INTEGER)
                 || EntityUtils.hasSpawnerSpawnReason(entity);
     }
 
     public static void tagSpawnedFromTrialSpawner(Entity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        entity.getPersistentDataContainer().set(new NamespacedKey(rosePlugin, SPAWNED_FROM_TRIAL_SPAWNER_METADATA_NAME), PersistentDataType.INTEGER, 1);
+        entity.getPersistentDataContainer().set(getSpawnedFromTrialSpawnerKey(), PersistentDataType.INTEGER, 1);
+        invalidateCachedFlags(entity);
     }
 
     /**
@@ -148,14 +211,13 @@ public final class PersistentDataUtils {
      * @return true if the entity was spawned from a trial spawner, otherwise false
      */
     public static boolean isSpawnedFromTrialSpawner(Entity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        return entity.getPersistentDataContainer().has(new NamespacedKey(rosePlugin, SPAWNED_FROM_TRIAL_SPAWNER_METADATA_NAME), PersistentDataType.INTEGER)
+        return entity.getPersistentDataContainer().has(getSpawnedFromTrialSpawnerKey(), PersistentDataType.INTEGER)
                 || EntityUtils.hasTrialSpawnerSpawnReason(entity);
     }
 
     public static void tagSpawnedFromDispenser(Entity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        entity.getPersistentDataContainer().set(new NamespacedKey(rosePlugin, SPAWNED_FROM_DISPENSER_METADATA_NAME), PersistentDataType.INTEGER, 1);
+        entity.getPersistentDataContainer().set(getSpawnedFromDispenserKey(), PersistentDataType.INTEGER, 1);
+        invalidateCachedFlags(entity);
     }
 
     /**
@@ -165,12 +227,10 @@ public final class PersistentDataUtils {
      * @return true if the entity was spawned from a dispenser, otherwise false
      */
     public static boolean isSpawnedFromDispenser(Entity entity) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
-        return entity.getPersistentDataContainer().has(new NamespacedKey(rosePlugin, SPAWNED_FROM_DISPENSER_METADATA_NAME), PersistentDataType.INTEGER);
+        return entity.getPersistentDataContainer().has(getSpawnedFromDispenserKey(), PersistentDataType.INTEGER);
     }
 
     public static void increaseSpawnCount(StackedSpawnerTile spawner, long amount) {
-        RosePlugin rosePlugin = RoseStacker.getInstance();
         PersistentDataContainer dataContainer = spawner.getPersistentDataContainer();
         if (dataContainer != null) {
             NamespacedKey key = getTotalSpawnsKey();

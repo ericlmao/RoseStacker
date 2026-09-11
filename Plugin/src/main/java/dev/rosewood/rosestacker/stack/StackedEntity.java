@@ -80,6 +80,16 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     private double x, y, z;
     private int lastModifiedTicks;
 
+    // Persistent data container flags, read once and kept here. The stacking conditions consult these for
+    // every candidate pair of every stacking pass, and a container lookup is a map lookup plus two string
+    // builds. The setters in PersistentDataUtils clear these through the stack, and they are dropped
+    // whenever the head entity is replaced, so a stale value cannot survive a chunk unload cycle either.
+    private volatile Boolean spawnedFromSpawner;
+    private volatile Boolean spawnedFromTrialSpawner;
+    private volatile Boolean spawnedFromDispenser;
+    private volatile Boolean unstackable;
+    private volatile Boolean aiDisabled;
+
     // The nametag state each tracking player last received, so periodic nametag passes only send a packet
     // when the name or visibility actually changed for that player. Created lazily; most stacks never have
     // a player near them. Entries are dropped when a player stops tracking the entity (see
@@ -152,6 +162,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             return;
 
         this.entity = entity;
+        this.invalidateCachedFlags();
         this.stackedEntityDataStorage.updateEntity(entity);
         this.resetHasMoved();
         this.updateDisplaySafely();
@@ -213,6 +224,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         stackManager.setEntityStackingTemporarilyDisabled(true);
         this.entity = this.stackedEntityDataStorage.pop().createEntity(oldEntity.getLocation(), true, oldEntity.getType());
+        this.invalidateCachedFlags();
         stackManager.setEntityStackingTemporarilyDisabled(false);
         this.stackSettings.applyUnstackProperties(this.entity, oldEntity);
         stackManager.updateStackedEntityKey(oldEntity, this);
@@ -474,7 +486,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             entityKillCount = stackEntities.size() + (mainEntityDrops != null ? 1 : 0);
 
         boolean propagateKiller = SettingKey.ENTITY_LOOT_PROPAGATE_KILLER.get();
-        boolean fromSpawner = PersistentDataUtils.isSpawnedFromSpawner(this.entity);
+        boolean fromSpawner = this.isSpawnedFromSpawner();
         Location location = mainEntity.getLocation();
         Player killer = propagateKiller ? mainEntity.getKiller() : null;
         Entity froglightKiller = NMSUtil.getVersionNumber() >= 19 && mainEntity.getType() == EntityType.MAGMA_CUBE && mainEntity.getLastDamageCause() instanceof EntityDamageByEntityEvent damageEvent && damageEvent.getDamager().getType() == EntityType.FROG ? damageEvent.getDamager() : null;
@@ -641,6 +653,67 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         return this.entity.getLocation();
     }
 
+    /**
+     * @return true if the head entity was spawned from a spawner, otherwise false
+     */
+    public boolean isSpawnedFromSpawner() {
+        Boolean value = this.spawnedFromSpawner;
+        if (value == null)
+            this.spawnedFromSpawner = value = PersistentDataUtils.isSpawnedFromSpawner(this.entity);
+        return value;
+    }
+
+    /**
+     * @return true if the head entity was spawned from a trial spawner, otherwise false
+     */
+    public boolean isSpawnedFromTrialSpawner() {
+        Boolean value = this.spawnedFromTrialSpawner;
+        if (value == null)
+            this.spawnedFromTrialSpawner = value = PersistentDataUtils.isSpawnedFromTrialSpawner(this.entity);
+        return value;
+    }
+
+    /**
+     * @return true if the head entity was spawned from a spawn egg in a dispenser, otherwise false
+     */
+    public boolean isSpawnedFromDispenser() {
+        Boolean value = this.spawnedFromDispenser;
+        if (value == null)
+            this.spawnedFromDispenser = value = PersistentDataUtils.isSpawnedFromDispenser(this.entity);
+        return value;
+    }
+
+    /**
+     * @return true if the head entity is marked unstackable, otherwise false
+     */
+    public boolean isUnstackable() {
+        Boolean value = this.unstackable;
+        if (value == null)
+            this.unstackable = value = PersistentDataUtils.isUnstackable(this.entity);
+        return value;
+    }
+
+    /**
+     * @return true if the head entity has its AI disabled, otherwise false
+     */
+    public boolean isAiDisabled() {
+        Boolean value = this.aiDisabled;
+        if (value == null)
+            this.aiDisabled = value = PersistentDataUtils.isAiDisabled(this.entity);
+        return value;
+    }
+
+    /**
+     * Forgets every cached persistent data container flag so the next read goes back to the container.
+     */
+    public void invalidateCachedFlags() {
+        this.spawnedFromSpawner = null;
+        this.spawnedFromTrialSpawner = null;
+        this.spawnedFromDispenser = null;
+        this.unstackable = null;
+        this.aiDisabled = null;
+    }
+
     public String getDisplayName() {
         if (this.displayName != null)
             return this.displayName;
@@ -657,17 +730,10 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         String customName = this.entity.getCustomName();
         if (this.getStackSize() > 1 || SettingKey.ENTITY_DISPLAY_TAGS_SINGLE.get()) {
-            String displayString;
-            StringPlaceholders.Builder placeholders = StringPlaceholders.builder("amount", StackerUtils.formatNumber(this.getStackSize()));
-            //NPCsHook.addCustomPlaceholders(this.entity, placeholders);
-
-            if (customName != null && SettingKey.ENTITY_DISPLAY_TAGS_CUSTOM_NAME.get()) {
-                placeholders.add("name", customName);
-                displayString = RoseStacker.getInstance().getManager(LocaleManager.class).getLocaleMessage("entity-stack-display-custom-name", placeholders.build());
-            } else {
-                placeholders.add("name", this.stackSettings.getDisplayName());
-                displayString = RoseStacker.getInstance().getManager(LocaleManager.class).getLocaleMessage("entity-stack-display", placeholders.build());
-            }
+            // The string only depends on the stack size and the custom name, and both repeat across
+            // thousands of stacks, so the settings for this entity type hold the finished strings
+            boolean useCustomName = customName != null && SettingKey.ENTITY_DISPLAY_TAGS_CUSTOM_NAME.get();
+            String displayString = this.stackSettings.getStackDisplayString(this.getStackSize(), useCustomName ? customName : null);
 
             this.displayNameVisible = !SettingKey.ENTITY_DISPLAY_TAGS_HOVER.get();
             return this.displayName = displayString;
@@ -874,7 +940,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
             overrideKiller = this.entity.getKiller();
 
         return this.stackSettings.shouldKillEntireStackOnDeath()
-                || (SettingKey.SPAWNER_DISABLE_MOB_AI_OPTIONS_KILL_ENTIRE_STACK_ON_DEATH.get() && PersistentDataUtils.isAiDisabled(this.entity))
+                || (SettingKey.SPAWNER_DISABLE_MOB_AI_OPTIONS_KILL_ENTIRE_STACK_ON_DEATH.get() && this.isAiDisabled())
                 || (lastDamageCause != null && SettingKey.ENTITY_KILL_ENTIRE_STACK_CONDITIONS.get().stream().anyMatch(x -> x.equalsIgnoreCase(lastDamageCause.getCause().name())))
                 || (overrideKiller != null && SettingKey.ENTITY_KILL_ENTIRE_STACK_ON_DEATH_PERMISSION.get() && overrideKiller.hasPermission("rosestacker.killentirestack"));
     }

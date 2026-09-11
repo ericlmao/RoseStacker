@@ -8,6 +8,7 @@ import dev.rosewood.rosestacker.manager.LocaleManager;
 import dev.rosewood.rosestacker.manager.StackSettingManager;
 import dev.rosewood.rosestacker.nms.NMSAdapter;
 import dev.rosewood.rosestacker.stack.settings.ItemStackSettings;
+import dev.rosewood.rosestacker.utils.PersistentDataUtils;
 import dev.rosewood.rosestacker.utils.StackerUtils;
 import dev.rosewood.rosestacker.utils.ThreadUtils;
 import org.bukkit.Bukkit;
@@ -30,6 +31,10 @@ public class StackedItem extends Stack<ItemStackSettings> implements Comparable<
 
     private ItemStackSettings stackSettings;
     private double x, y, z;
+
+    // Read once instead of on every pass; the item stacking pass consults this for the item and for every
+    // neighbour it looks at. PersistentDataUtils#setUnstackable clears it through the stack.
+    private volatile Boolean unstackable;
 
     public StackedItem(int size, Item item, boolean updateDisplay) {
         this.size = size;
@@ -57,7 +62,25 @@ public class StackedItem extends Stack<ItemStackSettings> implements Comparable<
             return;
 
         this.item = item;
+        this.invalidateCachedFlags();
         this.updateDisplaySafely();
+    }
+
+    /**
+     * @return true if this item is marked unstackable, otherwise false
+     */
+    public boolean isUnstackable() {
+        Boolean value = this.unstackable;
+        if (value == null)
+            this.unstackable = value = PersistentDataUtils.isUnstackable(this.item);
+        return value;
+    }
+
+    /**
+     * Forgets every cached persistent data container flag so the next read goes back to the container.
+     */
+    public void invalidateCachedFlags() {
+        this.unstackable = null;
     }
 
     public void increaseStackSize(int amount, boolean updateDisplay) {
