@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
@@ -15,6 +16,13 @@ public abstract class Hologram {
 
     private static final double LINE_OFFSET = 0.3;
 
+    /**
+     * Copy-on-write because the lines are rebuilt by the async display passes through
+     * {@link #setTextSilently} and {@link #createLines} while the version-specific subclasses are iterating
+     * them to build create and update packets, potentially on another thread. Holograms have a handful of
+     * lines and are rewritten only when their text actually changes, so the copies are cheap and rare, and
+     * every reader gets a list that is complete rather than one caught mid-refill.
+     */
     protected final List<HologramLine> hologramLines;
     protected final Map<Player, Boolean> watchers;
     protected final Location location;
@@ -24,7 +32,7 @@ public abstract class Hologram {
         this.location = location.clone();
         this.watchers = Collections.synchronizedMap(new WeakHashMap<>());
         this.entityIdSupplier = entityIdSupplier;
-        this.hologramLines = new ArrayList<>();
+        this.hologramLines = new CopyOnWriteArrayList<>();
         this.createLines(text);
     }
 
@@ -152,12 +160,7 @@ public abstract class Hologram {
      */
     public boolean setTextSilently(List<String> text) {
         if (text.size() != this.hologramLines.size()) {
-            this.hologramLines.clear();
-            for (int i = 0; i < text.size(); i++) {
-                double offset = (text.size() - i - 1) * LINE_OFFSET;
-                Location lineLocation = this.location.clone().add(0, offset, 0);
-                this.hologramLines.add(new HologramLine(this.entityIdSupplier.get(), lineLocation, text.get(i)));
-            }
+            this.replaceLines(text);
             return true;
         }
 
@@ -194,14 +197,28 @@ public abstract class Hologram {
     private void createLines(List<String> text) {
         List<Player> watchers = this.getWatcherSnapshot();
         watchers.forEach(this::delete);
-        this.hologramLines.clear();
+        this.replaceLines(text);
+        watchers.forEach(this::create);
+        this.update(watchers, true);
+    }
+
+    /**
+     * Swaps in a whole new set of lines. The replacements are built into a local list first and installed
+     * with a single clear and addAll, so a reader on another thread sees the old lines or the new ones
+     * rather than an empty list or a half-built one.
+     *
+     * @param text The text to build the lines from
+     */
+    private void replaceLines(List<String> text) {
+        List<HologramLine> lines = new ArrayList<>(text.size());
         for (int i = 0; i < text.size(); i++) {
             double offset = (text.size() - i - 1) * LINE_OFFSET;
             Location lineLocation = this.location.clone().add(0, offset, 0);
-            this.hologramLines.add(new HologramLine(this.entityIdSupplier.get(), lineLocation, text.get(i)));
+            lines.add(new HologramLine(this.entityIdSupplier.get(), lineLocation, text.get(i)));
         }
-        watchers.forEach(this::create);
-        this.update(watchers, true);
+
+        this.hologramLines.clear();
+        this.hologramLines.addAll(lines);
     }
 
     /**

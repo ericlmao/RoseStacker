@@ -365,15 +365,24 @@ public class HologramManager extends Manager implements Listener {
     }
 
     /**
-     * Per-player bookkeeping for the watcher loop. Only ever touched from the player's own thread, apart
-     * from {@link #deleteHologram} pruning a deleted hologram out of the watched set.
+     * Per-player bookkeeping for the watcher loop.
+     * <p>
+     * Written from the watcher timer's own thread when async display updates are on, and from the main
+     * thread by the join and hologram-creation paths that update a single watcher, plus
+     * {@link #deleteHologram} pruning a deleted hologram out of the watched set. The fields are therefore
+     * volatile so a reader on either thread sees the last position written rather than a cached one.
+     * <p>
+     * The updates are not atomic with each other and are not meant to be: two passes racing can lose an
+     * increment of {@link #idleCycles} or read an eye position from the wrong one of two nearly identical
+     * ticks. Both only decide whether to re-run a line-of-sight check this cycle or the next one, so the
+     * worst outcome is a wall check a cycle late.
      */
     private static final class PlayerHologramState {
 
         private final Set<Hologram> watching = ConcurrentHashMap.newKeySet();
-        private UUID worldId;
-        private double eyeX = Double.NaN, eyeY = Double.NaN, eyeZ = Double.NaN;
-        private int idleCycles;
+        private volatile UUID worldId;
+        private volatile double eyeX = Double.NaN, eyeY = Double.NaN, eyeZ = Double.NaN;
+        private volatile int idleCycles;
 
     }
 
