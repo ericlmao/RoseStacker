@@ -202,12 +202,30 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         // entry stripped from it. So anything the front entry still carries that is itself an unsafe key
         // (health, equipment, attributes, brain, ...) is a field no stack condition ever looks at, and the
         // head entity is an equally good stand-in for it. A spawner clone or an identical mob leaves nothing
-        // else behind, which on a spawner-fed farm is very nearly every stack.
+        // else behind, which on a spawner-fed farm is very nearly every stack. This only describes the stored
+        // entry; the head entity may still drift away from the base while it is alive, which is why callers
+        // bound how many checks in a row they answer this way (see StackedEntity#shouldStayStacked).
         for (String key : front.keySet())
             if (!NMSHandler.UNSAFE_NBT_KEY_SET.contains(key))
                 return false;
 
         return true;
+    }
+
+    @Override
+    public Boolean getBaseAdultState() {
+        // The entries are stored as a delta against the base, so the base holds the age every entry that
+        // does not override it has. "Age" is negative for a baby and zero or higher for an adult; the
+        // lowercase spelling is checked too, for the same reason NMSHandler lists both spellings of every
+        // other key it strips.
+        CompoundTag base = this.getBase();
+        if (base.contains("Age"))
+            return base.getIntOr("Age", 0) >= 0;
+
+        if (base.contains("age"))
+            return base.getIntOr("age", 0) >= 0;
+
+        return null;
     }
 
     @Override

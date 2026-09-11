@@ -90,11 +90,29 @@ public abstract class StackedEntityDataStorage {
      * Reports whether the entry at the front of this storage carries no data that any stack condition could
      * compare differently from the head entity itself. When true, callers may compare the stack against its
      * own head entity instead of materializing the entry into a throwaway entity.
+     * <p>
+     * The answer is about the stored entry only. It says nothing about the head entity, which is free to
+     * drift away from the data the entries are stored against while it is alive: a baby grows up, a sheep
+     * regrows its wool, a player tames an animal. Once that happens the head is no longer a stand-in for the
+     * entries and the comparison is no longer equivalent to the real one, so callers must bound how long
+     * they are willing to keep taking the shortcut. {@link dev.rosewood.rosestacker.stack.StackedEntity}
+     * does that with a per-stack cycle counter plus the age guard {@link #getBaseAdultState()} supports.
      *
      * @return true if the front entry is representable by the head entity, false otherwise
      */
     public boolean isHeadRepresentative() {
         return false;
+    }
+
+    /**
+     * Reports the adult state that the entries in this storage are stored against, which lets callers spot
+     * the most common way a live head entity drifts away from them without materializing anything.
+     *
+     * @return true if the stored entries are adults, false if they are babies, or null if this storage
+     *         cannot tell (it keeps no per-entry data, or the entries carry no age at all)
+     */
+    public Boolean getBaseAdultState() {
+        return null;
     }
 
     /**

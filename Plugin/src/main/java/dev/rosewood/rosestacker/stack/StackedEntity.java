@@ -97,6 +97,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
     // Unstack pass bookkeeping; see needsUnstackCheck()
     private int lastUnstackCheckModifiedTicks = Integer.MIN_VALUE;
     private int unstackCheckIdleCycles;
+    private int unstackPassesSinceFullCheck;
 
     // Autosave bookkeeping; see needsSave()
     private int lastSavedModifiedTicks = Integer.MIN_VALUE;
@@ -123,6 +124,15 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
      * forever. At the default unstack frequency of 50 ticks that is a worst case of 10 seconds.
      */
     private static final int IDLE_UNSTACK_RECHECK_CYCLES = 4;
+
+    /**
+     * A stack that keeps answering the unstack check from its own head entity still runs the full
+     * materialized comparison this many unstack passes apart, see {@link #shouldStayStacked()}. Passes are
+     * counted in {@link #needsUnstackCheck()}, so the idle skip above cannot stretch this deadline: at the
+     * default unstack frequency of 50 ticks a head that has quietly diverged from the entries behind it
+     * splits the stack within 20 seconds, against 2.5 seconds when every check materialized an entry.
+     */
+    private static final int FULL_UNSTACK_CHECK_CYCLES = 8;
 
     /**
      * A player and a stack that both stand still can only have the wall between them change when blocks
@@ -676,6 +686,11 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
      * @return true if this entity should stay stacked, otherwise false
      */
     public boolean shouldStayStacked() {
+        // Any check that does not end up taking the head shortcut below clears the shortcut's budget, so the
+        // count only ever measures how many passes in a row were answered from the head entity
+        int passesSinceFullCheck = this.unstackPassesSinceFullCheck;
+        this.unstackPassesSinceFullCheck = 0;
+
         if (this.entity == null || this.stackSettings == null || this.stackedEntityDataStorage.isEmpty())
             return true;
 
@@ -690,14 +705,23 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         // against the entity it was copied from, so compare the stack against itself instead. The
         // conditions then take their entity1 == entity2 path, which the stacking code already relies on
         // when looking for a stack to merge into, and reach the same verdict.
-        //
+        if (this.stackedEntityDataStorage.getType() == StackedEntityDataStorageType.SIMPLE)
+            return this.stackSettings.testCanStackWith(this, this, true);
+
         // NBT storage reaches the same place whenever the entry at the front of the storage carries nothing
         // that a stack condition could read differently from the head entity, which is the normal shape of
         // a spawner-fed farm stack: the members are clones that differ only in health, attributes and
         // equipment, all of which the storage strips into its shared base tag anyway.
-        if (this.stackedEntityDataStorage.getType() == StackedEntityDataStorageType.SIMPLE
-                || this.stackedEntityDataStorage.isHeadRepresentative())
+        //
+        // Unlike SIMPLE storage, that equivalence is not permanent: the stored entries stay as they were
+        // captured while the live head entity keeps being simulated, so a baby that grows up, a sheep that
+        // regrows its wool or an animal that gets tamed leaves the head describing something its stack
+        // members are not, and comparing the stack against itself would then never notice. The shortcut is
+        // therefore bounded rather than unconditional, by a cycle deadline and by the age guard below.
+        if (this.canAnswerUnstackCheckFromHead(passesSinceFullCheck) && this.stackedEntityDataStorage.isHeadRepresentative()) {
+            this.unstackPassesSinceFullCheck = passesSinceFullCheck;
             return this.stackSettings.testCanStackWith(this, this, true);
+        }
 
         // The wrapper around the deserialized copy only exists so the conditions can read getEntity() and
         // getStackSize(); nothing ever reads its data storage. Building an NBT storage for it re-serialized
@@ -707,6 +731,29 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
         LivingEntity entity = this.stackedEntityDataStorage.peek().createEntity(this.entity.getLocation(), false, this.entity.getType());
         StackedEntity stackedEntity = new StackedEntity(entity, nmsHandler.createEntityDataStorage(entity, StackedEntityDataStorageType.SIMPLE), false);
         return this.stackSettings.testCanStackWith(this, stackedEntity, true);
+    }
+
+    /**
+     * Decides whether this unstack check may be answered by comparing the stack against its own head entity
+     * instead of materializing the front entry.
+     *
+     * @param passesSinceFullCheck How many unstack passes in a row have already been answered this way
+     * @return true if the shortcut is still within its staleness bound, otherwise false
+     */
+    private boolean canAnswerUnstackCheckFromHead(int passesSinceFullCheck) {
+        if (passesSinceFullCheck >= FULL_UNSTACK_CHECK_CYCLES)
+            return false;
+
+        // Aging is the one divergence that happens on its own, without anything touching the stack, so it is
+        // worth a guard of its own rather than waiting out the deadline. Reading it costs a field read on the
+        // head entity and an int out of the already-captured base tag.
+        if (this.entity instanceof Ageable ageable) {
+            Boolean baseAdult = this.stackedEntityDataStorage.getBaseAdultState();
+            if (baseAdult != null && baseAdult != ageable.isAdult())
+                return false;
+        }
+
+        return true;
     }
 
     @Override
@@ -1051,11 +1098,16 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
      * it reached last time. Checking it anyway costs a materialized entity per stack per cycle on NBT
      * storage, which for an idle spawner farm is the whole cost of the pass. Idle stacks are still
      * re-checked every {@link #IDLE_UNSTACK_RECHECK_CYCLES} cycles so nothing can get stuck.
+     * <p>
+     * Every pass is counted here, including the ones that skip the check, so the deadline that
+     * {@link #shouldStayStacked()} uses to force a full comparison is measured in unstack passes rather
+     * than in checks the idle skip happened to let through.
      *
      * @return true if this stack should be checked, otherwise false
      */
     public boolean needsUnstackCheck() {
-        if (this.lastModifiedTicks == this.lastUnstackCheckModifiedTicks
+        boolean fullCheckDue = ++this.unstackPassesSinceFullCheck >= FULL_UNSTACK_CHECK_CYCLES;
+        if (!fullCheckDue && this.lastModifiedTicks == this.lastUnstackCheckModifiedTicks
                 && ++this.unstackCheckIdleCycles < IDLE_UNSTACK_RECHECK_CYCLES)
             return false;
 
