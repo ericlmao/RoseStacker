@@ -29,17 +29,15 @@ import org.bukkit.entity.LivingEntity;
 
 public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
-    private final NBTTagCompound base;
+    // Captured lazily by getBase() instead of in the constructor. The base is only ever used as a template for
+    // new entries and as the deduplication baseline, so nothing reads it until the stack actually grows past
+    // size 1, and roughly 99% of stacks never do. The spawner path used to pay for it twice per mob: once
+    // saving the mob into its own throwaway storage and again saving it into the stack it merged into.
+    private volatile NBTTagCompound base;
     private final Queue<NBTTagCompound> data;
 
     public NBTStackedEntityDataStorage(LivingEntity livingEntity) {
         super(StackedEntityDataStorageType.NBT, livingEntity);
-        this.base = new NBTTagCompound();
-
-        ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity, this.base);
-        this.stripUnneeded(this.base);
-        this.stripAttributeUuids(this.base);
-        NMSHandler.UNSAFE_NBT_KEYS.forEach(this.base::remove);
 
         this.data = createBackingQueue();
     }
@@ -56,6 +54,39 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
                 this.data.add(NBTCompressedStreamTools.a((DataInput) dataInput));
         } catch (Exception e) {
             throw new StackedEntityDataIOException(e);
+        }
+    }
+
+    /**
+     * Lazily captures the base tag from the head entity the first time anything needs it. The deserializing
+     * constructor sets it up front instead, since the stored bytes are the only copy of it that exists.
+     *
+     * @return the tag that every entry in this storage is stored as a delta against, never null
+     */
+    private NBTTagCompound getBase() {
+        NBTTagCompound base = this.base;
+        if (base != null)
+            return base;
+
+        synchronized (this) {
+            base = this.base;
+            if (base != null)
+                return base;
+
+            LivingEntity livingEntity = this.entity.get();
+            if (livingEntity == null) {
+                // The head entity is already gone, there is nothing left to template from
+                base = new NBTTagCompound();
+            } else {
+                base = new NBTTagCompound();
+                ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity, base);
+                this.stripUnneeded(base);
+                this.stripAttributeUuids(base);
+                NMSHandler.UNSAFE_NBT_KEYS.forEach(base::remove);
+            }
+
+            this.base = base;
+            return base;
         }
     }
 
@@ -82,8 +113,9 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     @Override
     public void addClones(int amount) {
+        NBTTagCompound base = this.getBase();
         for (int i = 0; i < amount; i++)
-            this.data.add(this.base.clone());
+            this.data.add(base.clone());
     }
 
     @Override
@@ -135,7 +167,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
             for (int i = 0; i < targetAmount; i++)
                 tagsToSave.add(iterator.next());
 
-            NBTCompressedStreamTools.a(this.base, (DataOutput) dataOutput);
+            NBTCompressedStreamTools.a(this.getBase(), (DataOutput) dataOutput);
             dataOutput.writeInt(tagsToSave.size());
             for (NBTTagCompound compoundTag : tagsToSave)
                 NBTCompressedStreamTools.a(compoundTag, (DataOutput) dataOutput);
@@ -229,8 +261,9 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
     }
 
     private void removeDuplicates(NBTTagCompound compoundTag) {
+        NBTTagCompound base = this.getBase();
         for (String key : new ArrayList<>(compoundTag.getKeys())) {
-            NBTBase baseValue = this.base.get(key);
+            NBTBase baseValue = base.get(key);
             NBTBase thisValue = compoundTag.get(key);
             if (baseValue != null && baseValue.equals(thisValue))
                 compoundTag.remove(key);
@@ -239,7 +272,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     private NBTTagCompound rebuild(NBTTagCompound compoundTag) {
         NBTTagCompound merged = new NBTTagCompound();
-        merged.a(this.base);
+        merged.a(this.getBase());
         merged.a(compoundTag);
         this.fillAttributeUuids(merged);
         return merged;

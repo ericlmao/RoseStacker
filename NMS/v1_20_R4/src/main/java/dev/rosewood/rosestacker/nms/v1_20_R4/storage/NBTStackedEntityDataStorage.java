@@ -27,17 +27,15 @@ import org.bukkit.entity.LivingEntity;
 
 public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
-    private final CompoundTag base;
+    // Captured lazily by getBase() instead of in the constructor. The base is only ever used as a template for
+    // new entries and as the deduplication baseline, so nothing reads it until the stack actually grows past
+    // size 1, and roughly 99% of stacks never do. The spawner path used to pay for it twice per mob: once
+    // saving the mob into its own throwaway storage and again saving it into the stack it merged into.
+    private volatile CompoundTag base;
     private final Queue<CompoundTag> data;
 
     public NBTStackedEntityDataStorage(LivingEntity livingEntity) {
         super(StackedEntityDataStorageType.NBT, livingEntity);
-        this.base = new CompoundTag();
-
-        ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity, this.base);
-        this.stripUnneeded(this.base);
-        this.stripAttributeUuids(this.base);
-        NMSHandler.UNSAFE_NBT_KEYS.forEach(this.base::remove);
 
         this.data = createBackingQueue();
     }
@@ -54,6 +52,39 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
                 this.data.add(NbtIo.read(dataInput));
         } catch (Exception e) {
             throw new StackedEntityDataIOException(e);
+        }
+    }
+
+    /**
+     * Lazily captures the base tag from the head entity the first time anything needs it. The deserializing
+     * constructor sets it up front instead, since the stored bytes are the only copy of it that exists.
+     *
+     * @return the tag that every entry in this storage is stored as a delta against, never null
+     */
+    private CompoundTag getBase() {
+        CompoundTag base = this.base;
+        if (base != null)
+            return base;
+
+        synchronized (this) {
+            base = this.base;
+            if (base != null)
+                return base;
+
+            LivingEntity livingEntity = this.entity.get();
+            if (livingEntity == null) {
+                // The head entity is already gone, there is nothing left to template from
+                base = new CompoundTag();
+            } else {
+                base = new CompoundTag();
+                ((NMSHandlerImpl) NMSAdapter.getHandler()).saveEntityToTag(livingEntity, base);
+                this.stripUnneeded(base);
+                this.stripAttributeUuids(base);
+                NMSHandler.UNSAFE_NBT_KEYS.forEach(base::remove);
+            }
+
+            this.base = base;
+            return base;
         }
     }
 
@@ -80,8 +111,9 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     @Override
     public void addClones(int amount) {
+        CompoundTag base = this.getBase();
         for (int i = 0; i < amount; i++)
-            this.data.add(this.base.copy());
+            this.data.add(base.copy());
     }
 
     @Override
@@ -133,7 +165,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
             for (int i = 0; i < targetAmount; i++)
                 tagsToSave.add(iterator.next());
 
-            NbtIo.write(this.base, dataOutput);
+            NbtIo.write(this.getBase(), dataOutput);
             dataOutput.writeInt(tagsToSave.size());
             for (CompoundTag compoundTag : tagsToSave)
                 NbtIo.write(compoundTag, dataOutput);
@@ -227,8 +259,9 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
     }
 
     private void removeDuplicates(CompoundTag compoundTag) {
+        CompoundTag base = this.getBase();
         for (String key : new ArrayList<>(compoundTag.getAllKeys())) {
-            Tag baseValue = this.base.get(key);
+            Tag baseValue = base.get(key);
             Tag thisValue = compoundTag.get(key);
             if (baseValue != null && baseValue.equals(thisValue))
                 compoundTag.remove(key);
@@ -237,7 +270,7 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
 
     private CompoundTag rebuild(CompoundTag compoundTag) {
         CompoundTag merged = new CompoundTag();
-        merged.merge(this.base);
+        merged.merge(this.getBase());
         merged.merge(compoundTag);
         this.fillAttributeUuids(merged);
         return merged;
