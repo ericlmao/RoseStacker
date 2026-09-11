@@ -71,7 +71,8 @@ public final class BatchedMainThreadExecutor {
 
     /**
      * Stops the drain task, running anything still queued if this is the main thread so no pending work
-     * (a partially spread autosave, for example) is dropped on shutdown.
+     * (a partially spread autosave, for example) is dropped on shutdown. Called from anywhere else it can
+     * only drop that work, and says so in the log.
      */
     public void stop() {
         if (this.drainTask != null) {
@@ -84,7 +85,17 @@ public final class BatchedMainThreadExecutor {
             while ((job = this.queue.poll()) != null)
                 run(job);
         } else {
-            this.queue.clear();
+            // There is no thread here that may touch entities, so the queue has to be dropped. That is not
+            // free: the periodic passes claim a stack (pendingEntityUnstackChecks) before queueing work for
+            // it and rely on the job itself to release the claim, so a dropped job leaves its stack claimed
+            // and unchecked until its entity is replaced. Latent today, since StackManager#disable stops the
+            // executor from the main thread, but it should not go by quietly if that ever changes.
+            int dropped = 0;
+            while (this.queue.poll() != null)
+                dropped++;
+
+            if (dropped > 0)
+                RoseStacker.getInstance().getLogger().log(Level.WARNING, "The batched task executor was stopped off the main thread, dropping " + dropped + " queued tasks.");
         }
     }
 

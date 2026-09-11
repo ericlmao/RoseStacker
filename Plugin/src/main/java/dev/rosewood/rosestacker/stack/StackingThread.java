@@ -3,6 +3,7 @@ package dev.rosewood.rosestacker.stack;
 import dev.rosewood.rosegarden.RosePlugin;
 import dev.rosewood.rosegarden.compatibility.CompatibilityAdapter;
 import dev.rosewood.rosegarden.scheduler.task.ScheduledTask;
+import dev.rosewood.rosestacker.RoseStacker;
 import dev.rosewood.rosestacker.config.SettingKey;
 import dev.rosewood.rosestacker.event.EntityStackClearEvent;
 import dev.rosewood.rosestacker.event.EntityStackEvent;
@@ -43,6 +44,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
+import java.util.logging.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
@@ -244,7 +246,7 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             List<StackedEntity> batch = pending.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, pending.size()));
             executor.submit(() -> {
                 for (StackedEntity stackedEntity : batch)
-                    this.tryStackEntityChecked(stackedEntity);
+                    runGuarded(() -> this.tryStackEntityChecked(stackedEntity));
             });
         }
     }
@@ -308,7 +310,7 @@ public class StackingThread implements StackingLogic, AutoCloseable {
             List<PendingUnstackCheck> batch = pending.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, pending.size()));
             executor.submit(() -> {
                 for (PendingUnstackCheck check : batch)
-                    this.checkUnstackEntity(check.stackedEntity(), check.entityId());
+                    runGuarded(() -> this.checkUnstackEntity(check.stackedEntity(), check.entityId()));
             });
         }
     }
@@ -402,7 +404,7 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         BatchedMainThreadExecutor executor = BatchedMainThreadExecutor.getInstance();
         for (int i = 0; i < toCreate.size(); i += MAIN_THREAD_BATCH_SIZE) {
             List<Runnable> batch = toCreate.subList(i, Math.min(i + MAIN_THREAD_BATCH_SIZE, toCreate.size()));
-            executor.submit(() -> batch.forEach(Runnable::run));
+            executor.submit(() -> batch.forEach(StackingThread::runGuarded));
         }
     }
 
@@ -1414,16 +1416,36 @@ public class StackingThread implements StackingLogic, AutoCloseable {
         boolean entityStackingEnabled = this.stackManager.isEntityStackingEnabled();
         boolean itemStackingEnabled = this.stackManager.isItemStackingEnabled();
         for (Stack<?> stack : stacks) {
-            if (entityStackingEnabled && stack instanceof StackedEntity stackedEntity) {
-                // Unloading and shutdown always write, no matter what the dirty state says
-                DataUtils.writeStackedEntity(stackedEntity);
-                if (clearStored)
-                    this.stackedEntities.remove(stackedEntity.getEntity().getUniqueId());
-            } else if (itemStackingEnabled && stack instanceof StackedItem stackedItem) {
-                DataUtils.writeStackedItem(stackedItem);
-                if (clearStored)
-                    this.stackedItems.remove(stackedItem.getItem().getUniqueId());
-            }
+            runGuarded(() -> {
+                if (entityStackingEnabled && stack instanceof StackedEntity stackedEntity) {
+                    // Unloading and shutdown always write, no matter what the dirty state says
+                    DataUtils.writeStackedEntity(stackedEntity);
+                    if (clearStored)
+                        this.stackedEntities.remove(stackedEntity.getEntity().getUniqueId());
+                } else if (itemStackingEnabled && stack instanceof StackedItem stackedItem) {
+                    DataUtils.writeStackedItem(stackedItem);
+                    if (clearStored)
+                        this.stackedItems.remove(stackedItem.getItem().getUniqueId());
+                }
+            });
+        }
+    }
+
+    /**
+     * Runs one stack's share of a batched main-thread job, so a failure stays with the stack that caused it.
+     * <p>
+     * A batch is a single job covering up to {@value #MAIN_THREAD_BATCH_SIZE} stacks, and an exception
+     * escaping one of them used to take every stack behind it in the batch with it: their saves never ran,
+     * and for the unstack pass their claims in {@link #pendingEntityUnstackChecks} were never released, so
+     * they stopped being checked for as long as their entity lived.
+     *
+     * @param action The work for one stack
+     */
+    private static void runGuarded(Runnable action) {
+        try {
+            action.run();
+        } catch (Throwable t) {
+            RoseStacker.getInstance().getLogger().log(Level.SEVERE, "An error occurred while processing a stack", t);
         }
     }
 
