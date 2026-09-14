@@ -5,4 +5,19 @@ dependencies {
     compileOnly 'org.spigotmc:spigot:26.2'
     compileOnly 'com.mojang:datafixerupper:8.0.16'
     compileOnly 'io.netty:netty-all:4.1.68.Final'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+    // The published Spigot server artifact does not declare its runtime libraries.
+    testRuntimeOnly 'com.mojang:logging:1.7.12'
+}
+
+configurations {
+    testImplementation.extendsFrom compileOnly
+}
+
+test {
+    // Plugin's plain and shaded jars share a filename; wait for the final writer.
+    dependsOn ':Plugin:shadowJar'
+    useJUnitPlatform()
 }
