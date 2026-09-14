@@ -421,7 +421,10 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
     private NBTTagCompound rebuild(NBTTagCompound compoundTag) {
         NBTTagCompound merged = new NBTTagCompound();
         merged.a(this.getBase());
-        merged.a(compoundTag);
+        // Entries contain complete top-level values, not recursive compound deltas.
+        // Merging compounds recursively would resurrect template PDC keys absent from this mob.
+        for (String key : compoundTag.getKeys())
+            merged.set(key, compoundTag.get(key).clone());
         this.fillAttributeUuids(merged);
         return merged;
     }
@@ -430,6 +433,15 @@ public class NBTStackedEntityDataStorage extends StackedEntityDataStorage {
         NMSHandler.REMOVABLE_NBT_KEYS.forEach(compoundTag::remove);
         NBTTagCompound bukkitValues = compoundTag.getCompound("BukkitValues");
         bukkitValues.remove("rosestacker:stacked_entity_data");
+        // Keep an explicit empty PDC so a normal mob can override a flagged template.
+        compoundTag.set("BukkitValues", bukkitValues);
+
+        // Minecraft omits these flags when false. Store that false explicitly before
+        // deduplication so a normal member cannot inherit a template's disabled physics.
+        if (!compoundTag.hasKey("NoAI"))
+            compoundTag.setBoolean("NoAI", false);
+        if (!compoundTag.hasKey("NoGravity"))
+            compoundTag.setBoolean("NoGravity", false);
     }
 
     private void stripAttributeUuids(NBTTagCompound compoundTag) {
