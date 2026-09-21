@@ -35,6 +35,12 @@ dependencies {
     api "dev.rosewood:rosegarden:$rosegardenVersion"
     api "dev.rosewood:rosegarden-compatibility:$rosegardenVersion"
     api 'dev.rosewood:guiframework:1.1.7'
+
+    testImplementation project(':NMS:Wrapper')
+    testImplementation "io.papermc.paper:paper-api:${paperVersion}.build.+"
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.mockito:mockito-core:5.23.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
 }
 
 processResources {
@@ -47,4 +53,8 @@ processResources {
 
 shadowJar {
     archiveClassifier.set(null)
+}
+
+test {
+    useJUnitPlatform()
 }
