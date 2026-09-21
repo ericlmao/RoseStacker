@@ -215,6 +215,11 @@ public class EntityListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEntityTarget(EntityTargetEvent event) {
+        // Cancelling a null target prevents the server from forgetting the old entity.
+        // Merged/dead targets must be cleared even when acquiring targets is disabled.
+        if (event.getTarget() == null)
+            return;
+
         // Withers can still target enitites due to custom boss AI, so prevent them from targeting when AI is disabled
         Entity entity = event.getEntity();
         if (!(entity instanceof LivingEntity))
