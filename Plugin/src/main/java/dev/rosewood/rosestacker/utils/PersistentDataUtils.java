@@ -19,6 +19,7 @@ import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.PiglinAbstract;
+import org.bukkit.entity.Raider;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 
@@ -141,6 +142,11 @@ public final class PersistentDataUtils {
     }
 
     public static void applyDisabledAi(LivingEntity entity, boolean disable) {
+        // Raid recruitment runs separately from goals and Paper awareness. Reapply
+        // this on load/unstack as older saved spawner mobs may still be eligible.
+        if (entity instanceof Raider raider && isSpawnedFromSpawner(entity))
+            raider.setCanJoinRaid(false);
+
         if (isAiDisabled(entity) || !disable) {
             if (SettingKey.SPAWNER_DISABLE_MOB_AI_OPTIONS_REMOVE_GOALS.get() && disable) {
                 NMSHandler nmsHandler = NMSAdapter.getHandler();
@@ -186,6 +192,8 @@ public final class PersistentDataUtils {
     public static void tagSpawnedFromSpawner(Entity entity) {
         entity.getPersistentDataContainer().set(getSpawnedFromSpawnerKey(), PersistentDataType.INTEGER, 1);
         invalidateCachedFlags(entity);
+        if (entity instanceof Raider raider)
+            raider.setCanJoinRaid(false);
     }
 
     /**
