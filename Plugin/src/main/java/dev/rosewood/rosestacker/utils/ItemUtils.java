@@ -58,6 +58,8 @@ public final class ItemUtils {
     private final static Map<String, ItemStack> skullCache = new HashMap<>();
     private static Field field_SkullMeta_profile;
     private static ItemStack cachedStackingTool;
+    private static Boolean modernPlayerItemDamageEvent;
+    private static Boolean hasGetMaxDamage;
 
     public static Material getWoolMaterial(DyeColor dyeColor) {
         if (dyeColor == null)
@@ -111,12 +113,27 @@ public final class ItemUtils {
         if (!(itemMeta instanceof Damageable damageable))
             return;
 
-        int unbreakingLevel = tool.getEnchantmentLevel(Enchantment.UNBREAKING);
+        int unbreakingLevel = tool.getEnchantmentLevel(VersionUtils.UNBREAKING);
         if (!checkUnbreakingChance(unbreakingLevel))
             return;
 
+        if (modernPlayerItemDamageEvent == null) {
+            modernPlayerItemDamageEvent = PlayerItemDamageEvent.class.getConstructors().length > 1;
+            try {
+                Damageable.class.getMethod("getMaxDamage");
+                hasGetMaxDamage = true;
+            } catch (ReflectiveOperationException ex) {
+                hasGetMaxDamage = false;
+            }
+        }
+
         // This could decrease the durability more than intended, we'll just have to live with that
-        PlayerItemDamageEvent event = new PlayerItemDamageEvent(player, tool, 1, 1);
+        PlayerItemDamageEvent event;
+        if (modernPlayerItemDamageEvent) {
+            event = new PlayerItemDamageEvent(player, tool, 1, 1);
+        } else {
+            event = new PlayerItemDamageEvent(player, tool, 1);
+        }
         Bukkit.getPluginManager().callEvent(event);
         if (event.isCancelled() || event.getDamage() == 0)
             return;
@@ -124,7 +141,13 @@ public final class ItemUtils {
         damageable.setDamage(damageable.getDamage() + event.getDamage());
         tool.setItemMeta((ItemMeta) damageable); // Older versions do not have Damageable as implementing ItemMeta, do not remove cast
 
-        if (damageable.getDamage() >= damageable.getMaxDamage())
+        int maxDamage;
+        if (hasGetMaxDamage) {
+            maxDamage = damageable.getMaxDamage();
+        } else {
+            maxDamage = tool.getType().getMaxDurability();
+        }
+        if (damageable.getDamage() >= maxDamage)
             player.getInventory().setItemInMainHand(null);
     }
 
