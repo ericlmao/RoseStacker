@@ -21,6 +21,7 @@ import dev.rosewood.rosestacker.stack.settings.SpawnerStackSettings;
 import dev.rosewood.rosestacker.utils.EntityUtils;
 import dev.rosewood.rosestacker.utils.ItemUtils;
 import dev.rosewood.rosestacker.utils.PersistentDataUtils;
+import dev.rosewood.rosestacker.utils.StackerUtils;
 import dev.rosewood.rosestacker.utils.ThreadUtils;
 import dev.rosewood.rosestacker.utils.VersionUtils;
 import java.lang.reflect.Method;
@@ -345,7 +346,7 @@ public class EntityListener implements Listener {
 
             Player killer = entity.getKiller();
             if (killer != null && killedEntities.size() - 1 > 0 && SettingKey.MISC_STACK_STATISTICS.get())
-                killer.incrementStatistic(Statistic.KILL_ENTITY, entity.getType(), killedEntities.size() - 1);
+                StackerUtils.incrementStatisticSafely(killer, Statistic.KILL_ENTITY, entity.getType(), killedEntities.size() - 1);
         }
     }
 

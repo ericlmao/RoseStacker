@@ -148,7 +148,7 @@ public class BreedingListener implements Listener {
             StackerUtils.dropExperience(animal.getLocation(), totalChildren, totalExperience, totalChildren);
 
             // Increment statistic
-            player.incrementStatistic(Statistic.ANIMALS_BRED, totalChildren);
+            StackerUtils.incrementStatisticSafely(player, Statistic.ANIMALS_BRED, totalChildren);
         }, 30);
     }
 
