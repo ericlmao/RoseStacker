@@ -21,6 +21,7 @@ import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle.DustOptions;
+import org.bukkit.Statistic;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.AttributeInstance;
@@ -362,6 +363,48 @@ public final class StackerUtils {
 
     public static boolean isVanished(Player player) {
         return player.getMetadata("vanished").stream().anyMatch(MetadataValue::asBoolean);
+    }
+
+    /**
+     * Increments a player's statistic without overflowing. Bukkit computes {@code current + amount} as an int and
+     * rejects the result if it wrapped negative, which happens once a stacked kill or breed count pushes a statistic
+     * past {@link Integer#MAX_VALUE}. The value is capped at {@link Integer#MAX_VALUE} instead.
+     *
+     * @param player The player whose statistic to increment
+     * @param statistic The untyped statistic to increment
+     * @param amount The amount to add, does nothing if not positive
+     */
+    public static void incrementStatisticSafely(Player player, Statistic statistic, int amount) {
+        if (amount <= 0)
+            return;
+
+        int current = player.getStatistic(statistic);
+        if (current > Integer.MAX_VALUE - amount) {
+            player.setStatistic(statistic, Integer.MAX_VALUE);
+        } else {
+            player.incrementStatistic(statistic, amount);
+        }
+    }
+
+    /**
+     * Increments a player's entity statistic without overflowing.
+     *
+     * @param player The player whose statistic to increment
+     * @param statistic The entity statistic to increment
+     * @param entityType The entity type of the statistic
+     * @param amount The amount to add, does nothing if not positive
+     * @see #incrementStatisticSafely(Player, Statistic, int)
+     */
+    public static void incrementStatisticSafely(Player player, Statistic statistic, EntityType entityType, int amount) {
+        if (amount <= 0)
+            return;
+
+        int current = player.getStatistic(statistic, entityType);
+        if (current > Integer.MAX_VALUE - amount) {
+            player.setStatistic(statistic, entityType, Integer.MAX_VALUE);
+        } else {
+            player.incrementStatistic(statistic, entityType, amount);
+        }
     }
 
     public static Location adjustBlockLocation(Location location) {

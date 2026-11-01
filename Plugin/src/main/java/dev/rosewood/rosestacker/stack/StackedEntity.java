@@ -1315,7 +1315,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         Player killer = this.entity.getKiller();
         if (killer != null && amount - 1 > 0 && SettingKey.MISC_STACK_STATISTICS.get())
-            killer.incrementStatistic(Statistic.KILL_ENTITY, this.entity.getType(), amount - 1);
+            StackerUtils.incrementStatisticSafely(killer, Statistic.KILL_ENTITY, this.entity.getType(), amount - 1);
 
         RoseStacker.getInstance().getManager(StackManager.class).removeEntityStack(this);
 
@@ -1369,7 +1369,7 @@ public class StackedEntity extends Stack<EntityStackSettings> implements Compara
 
         Player killer = originalEntity.getKiller();
         if (killer != null && amount - 1 > 0 && SettingKey.MISC_STACK_STATISTICS.get())
-            killer.incrementStatistic(Statistic.KILL_ENTITY, this.entity.getType(), amount - 1);
+            StackerUtils.incrementStatisticSafely(killer, Statistic.KILL_ENTITY, this.entity.getType(), amount - 1);
     }
 
     public static int getNextMultikillAmount(LivingEntity entity, int stackSize) {
